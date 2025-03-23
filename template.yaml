@@ -1,0 +1,29 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  eks-automation-lambda
+
+Resources:
+  EKSAutomationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: eks_automation/
+      Handler: app.lambda_handler
+      Runtime: python3.11
+      Events:
+        EKSAutomation:
+          Type: Api
+          Properties:
+            Path: /EKSAutomation
+            Method: get
+
+Outputs:
+  EKSAutomationApi:
+    Description: "API Gateway endpoint URL for Prod stage for EKS Automation function"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/automation/"
+  EKSAutomationFunction:
+    Description: "EKS Automation Lambda Function ARN"
+    Value: !GetAtt EKSAutomationFunction.Arn
+  EKSAutomationFunctionIamRole:
+    Description: "Implicit IAM Role created for EKS Automation function"
+    Value: !GetAtt EKSAutomationFunctionRole.Arn

@@ -1,0 +1,7 @@
+pylint
+black
+pre-commit
+
+loguru
+Jinja2
+requests
