@@ -62,11 +62,3 @@ reformatted main.py
 All done! ✨ 🍰 ✨
 1 files reformatted, 1 files left unchanged.
 ```
-
-### How to run the application?
-
-Run `main.py`:
-
-```sh
-python main.py
-```

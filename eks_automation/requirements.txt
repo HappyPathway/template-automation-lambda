@@ -5,3 +5,5 @@ pre-commit
 loguru
 Jinja2
 requests
+pygithub
+boto3
