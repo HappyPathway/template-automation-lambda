@@ -4,6 +4,12 @@ Description: >
   eks-automation-lambda
 
 Resources:
+  EKSAutomationApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Prod
+      Auth:
+        ApiKeyRequired: true # sets for all methods
   GitLambdaLayer:
     Type: AWS::Serverless::LayerVersion
     Properties:
@@ -25,8 +31,11 @@ Resources:
         EKSAutomation:
           Type: Api
           Properties:
+            RestApiId: !Ref EKSAutomationApi
             Path: /EKSAutomation
             Method: get
+            Auth:
+              ApiKeyRequired: true
       Policies:
         - AWSLambdaVPCAccessExecutionRole
         - Statement:
@@ -63,7 +72,7 @@ Resources:
 Outputs:
   EKSAutomationApi:
     Description: "API Gateway endpoint URL for Prod stage for EKS Automation function"
-    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/automation/"
+    Value: !Sub "https://${EKSAutomationApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/automation/"
   EKSAutomationFunction:
     Description: "EKS Automation Lambda Function ARN"
     Value: !GetAtt EKSAutomationFunction.Arn
