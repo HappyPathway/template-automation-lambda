@@ -1,9 +1,9 @@
-pylint
-black
-pre-commit
+# pylint
+# black
+# pre-commit
 
-loguru
-Jinja2
+jinja2
+boto3
 requests
 pygithub
-boto3
+gitpython
