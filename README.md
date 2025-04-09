@@ -11,7 +11,9 @@ This repository hosts `eks-automation-lambda` automation work at `Census`.
 - requirements.txt
 - pre-commit hook
 
-## Install `virtualenv`
+## Project Setup
+
+### Install `virtualenv`
 
 ```sh
 pip install virtualenv
@@ -62,3 +64,9 @@ reformatted main.py
 All done! ✨ 🍰 ✨
 1 files reformatted, 1 files left unchanged.
 ```
+
+## NOTES
+
+- This lambda function relies on [`git-lambda-layer`](https://github.com/lambci/git-lambda-layer), which must be uploaded to the S3 bucket specified in samconfig.toml prior to deployment.
+- The REST API for this Lambda function is configured to be accessed using an API key.
+- To access the Census GitHub Enterprise Server, a VPC with private subnets connected to the server must be attached.
