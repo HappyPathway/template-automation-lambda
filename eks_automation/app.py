@@ -101,7 +101,9 @@ def operate_github(new_repo_name, eks_settings, output_hcl):
 
     # In case the new repo already exists locally, delete it.
     if os.path.exists(f"/tmp/{new_repo_name}"):
-        shutil.rmtree(new_repo_name, ignore_errors=False, onerror=remove_readonly)
+        shutil.rmtree(
+            f"/tmp/{new_repo_name}", ignore_errors=False, onerror=remove_readonly
+        )
 
     # Since Census GitHub Enterprise server uses a private TLS certificate,
     # the certificate veriification must be disabled.
