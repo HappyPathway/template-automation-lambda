@@ -9,7 +9,41 @@ Resources:
     Properties:
       StageName: Prod
       Auth:
-        ApiKeyRequired: true # sets for all methods
+        ApiKeyRequired: true
+        UsagePlan:
+          UsagePlanName: eks-automation-usage-plan
+          CreateUsagePlan: PER_API
+          Description: Usage plan for EKS Automation API
+          Quota:
+            Limit: 5000
+            Period: MONTH
+          Throttle:
+            BurstLimit: 500
+            RateLimit: 100
+          Tags:
+            - Key: finops_project_name
+              Value: csvd_platformbaseline
+            - Key: finops_project_number
+              Value: fs0000000078
+            - Key: finops_project_role
+              Value: csvd_platformbaseline_app
+            - Key: environment
+              Value: development
+            - Key: environment_abbr
+              Value: dev
+            - Key: organization
+              Value: census:ocio:csvd
+      Cors:
+        AllowMethods: "'POST,OPTIONS'"
+        AllowHeaders: "'Content-Type,Authorization'"
+        AllowOrigin: "'*'"
+      Tags:
+        environment: development
+        environment_abbr: dev
+        organization: census:ocio:csvd
+        finops_project_name: csvd_platformbaseline
+        finops_project_number: fs0000000078
+        finops_project_role: csvd_platformbaseline_app
   GitLambdaLayer:
     Type: AWS::Serverless::LayerVersion
     Properties:
@@ -33,7 +67,7 @@ Resources:
           Properties:
             RestApiId: !Ref EKSAutomationApi
             Path: /EKSAutomation
-            Method: get
+            Method: post
             Auth:
               ApiKeyRequired: true
       Policies:

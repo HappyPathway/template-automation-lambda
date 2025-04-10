@@ -2,7 +2,7 @@
 # Script
 # @usage python main.py
 ##################################################################
-from __future__ import print_function
+# from __future__ import print_function
 
 import os
 import stat
@@ -15,11 +15,11 @@ import logging
 import json
 from jinja2 import Environment, FileSystemLoader
 
-# pragma pylint: disable=E0401
+# pylint: disable=import-error
 from github import Github, Auth, GithubException
 from git import Repo
 
-# pragma pylint: enable=E0401
+# pylint: enable=import-error
 
 import boto3
 from botocore.exceptions import ClientError
@@ -29,112 +29,190 @@ CENSUS_GITHUB_API = "https://github.e.it.census.gov/api/v3"
 ORG_NAME = "SCT-Engineering"
 SECRET_NAME = "/dev/eks_automation_github_token"
 
-TEMPLATE_REPO_NAME = "platform-tg-infra"
+ORIG_REPO_NAME = "platform-tg-infra"
 NEW_REPO_NAME = "eks-automation-lambda-test1"
+
+TEMPLATE_FILE_NAME = "eks.hcl.j2"
+HCL_FILE_NAME = "eks.hcl"
+
+# DATA_FILE_NAME = "data.json"
 
 # Initialize the logger
 logger = logging.getLogger()
 logger.setLevel("INFO")
 
 
-# pylint: disable-next=W0613
+# pylint: disable=unused-argument
 def lambda_handler(event, context):
+    """
+    Main Lambda handler function
 
-    # personId = event['queryStringParameters']['personId']
-    operate_github()
+    Args:
+        event (dict): Dict containing the Lambda function event data.
+        context (dict): Lambda runtime context.
 
-    return {"statusCode": 200, "message": "Processed successfully"}
+    Returns:
+        dict: Dict containing status message.
+    """
+
+    # For test, load input data from a local file.
+    # input_data = ""
+    # with open(DATA_FILE_NAME, "r") as file:
+    #     input_data = json.load(file)
+
+    try:
+        input_data = json.loads(event["body"])
+        rendered = operate_github(NEW_REPO_NAME, input_data, HCL_FILE_NAME)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        return {"statusCode": 400, "body": json.dumps({"error": str(e)})}
+
+    return {
+        "statusCode": 200,
+        "headers": {"Access-Control-Allow-Origin": "*"},
+        "body": json.dumps({"result": rendered}),
+    }
 
 
-def operate_github():
-    org, token = github_org(CENSUS_GITHUB_API, ORG_NAME)
-    repo_template = template_repo(org, TEMPLATE_REPO_NAME)
-    repo_new = new_repo(org, NEW_REPO_NAME)
+def operate_github(new_repo_name, json_data, output_hcl):
+    """Clone a GitHub repo, add an EKS parameter file rendered
+    from a template and the input JSON dta, and push to a new repo.
 
-    if os.path.exists(NEW_REPO_NAME):
-        shutil.rmtree(NEW_REPO_NAME, ignore_errors=False, onerror=remove_readonly)
+    Args:
+        new_repo_name (str): Name of the new GitHub repo.
+        json_data (json): Input JSON data with all the EKS parameter values.
+        output_hcl (str): Name of the EKS parameter file in HCL format.
 
+    Returns:
+        str: The rendered EKS parameter string.
+    """
+
+    # Get both the original repo and the new repo objects from GitHub.
+    # If the new repo doesn't exist, create it in GitHub.
+    token = github_token()
+    org = github_org(CENSUS_GITHUB_API, ORG_NAME, token)
+    repo_orig = get_repo(org, ORIG_REPO_NAME)
+    repo_new = get_repo(org, new_repo_name, create=True)
+
+    # In case the new repo already exists locally, delete it.
+    if os.path.exists(f"/tmp/{new_repo_name}"):
+        shutil.rmtree(new_repo_name, ignore_errors=False, onerror=remove_readonly)
+
+    # Since Census GitHub Enterprise server uses a private TLS certificate,
+    # the certificate veriification must be disabled.
+    # This Git command will save the setting into ".gitconfig" file locally in the $HOME directory.
+    # Because the only writable place in Lambda fucntion is "/tmp",
+    # The HOME environment must be set to there.
+    # This is done using the "Environment" attribute in the "template.yaml" file.
     cmd = ["git", "config", "--global", "http.sslVerify", "false"]
     subprocess.run(cmd, check=False)
 
-    repo_url_with_token = f"https://{token}@{repo_template.html_url.split('//')[1]}"
+    # Clone the original repo.
+    # Since the only writable directory is "/tmp", we store the cloned repo there.
+    repo_url_with_token = f"https://{token}@{repo_orig.html_url.split('//')[1]}"
+    cloned_repo = Repo.clone_from(repo_url_with_token, f"/tmp/{new_repo_name}")
 
-    cloned_repo = Repo.clone_from(repo_url_with_token, f"/tmp/{NEW_REPO_NAME}")
-    origin = cloned_repo.remotes.origin
+    # Change the remote URL of the local staging repo to the URL of the new repo.
     repo_url_with_token = f"https://{token}@{repo_new.html_url.split('//')[1]}"
-    origin.set_url(repo_url_with_token, allow_unsafe_protocols=True)
+    origin = cloned_repo.remotes.origin
+    origin.set_url(repo_url_with_token)
 
+    # If the default branch of the original repo is "master", rename it to "main".
     branch_name = cloned_repo.head.ref.name
     if branch_name == "master":
         current_branch = cloned_repo.heads.master
         current_branch.rename("main", force=True)
 
-    process_eks_data("data.json", "eks.hcl", "eks.hcl.j2")
+    # Render the j2 template using the input data.
+    rendered = render_j2_template(json_data, TEMPLATE_FILE_NAME)
+    # Write the renderd data to a file in the local staging repository root directory
+    with open(f"/tmp/{new_repo_name}/{output_hcl}", "w") as file:
+        file.write(rendered)
 
-    # os.chdir(NEW_REPO_NAME)
-    cloned_repo.index.add("eks.hcl")
-    commit_message = "Add a new file"
+    # Commit and push the changes.
+    cloned_repo.index.add(output_hcl)
+    commit_message = "Add the EKS paramter file by the Lambda function"
     cloned_repo.index.commit(commit_message)
     cloned_repo.git.push("--set-upstream", origin.name, "main", force=True)
 
-    return True
+    return rendered
 
 
-def template_repo(org, template_repo_name):
+def get_repo(org, repo_name, create=False):
+    """Retrieve a repository from GitHub Org.
+
+    Args:
+        org (obj): GitHub Organization object
+        repo_name (str): Name of the repository to retrieve
+        create (bool): Whether to create it if the named repository doesn't exist
+
+    Returns:
+        obj: GitHub repository object
+    """
     try:
-        repo_template = org.get_repo(template_repo_name)
+        repo = org.get_repo(repo_name)
     except GithubException as e:
         if e.status == 404:
-            logger.error("Repo: %s doesn't exist", template_repo_name)
-            raise
+            if create:
+                logger.info("Create repo: %s", repo_name)
+                repo_desc = "EKS Automation CI/CD Pipeline Repo"
+                repo = org.create_repo(
+                    repo_name,
+                    description=repo_desc,
+                    visibility="internal",
+                    private=True,
+                )
+            else:
+                logger.error("Repo: %s doesn't exist", repo_name)
+                raise
 
-    return repo_template
-
-
-def new_repo(org, repo_name):
-    try:
-        repo_new = org.get_repo(repo_name)
-    except GithubException as e:
-        if e.status == 404:
-            logger.info("Create repo: %s", repo_name)
-            repo_desc = "EKS Automation CI/CD Pipeline Repo"
-            repo_new = org.create_repo(
-                repo_name, description=repo_desc, visibility="internal", private=True
-            )
-
-    return repo_new
+    return repo
 
 
-def process_eks_data(
-    json_fname, hcl_fname, j2_template_fname, j2_template_dir="templates/"
-):
-    # Open and read the JSON file
-    data = ""
-    with open(json_fname, "r") as file:
-        data = json.load(file)
+def render_j2_template(json_data, j2_template, j2_template_dir="templates/"):
+    """Render the j2 template with the input JSON data
 
+    Args:
+        json_data (json): input data in JSON format.
+        j2_template (j2): Name of the template file to generate the output.
+        j2_template_dir (str, optional): The directory where the templates are stored. Defaults to "templates/".
+
+    Returns:
+        str: Rendered template string.
+    """
+
+    # Render template
     jinja_env = Environment(loader=FileSystemLoader(j2_template_dir), trim_blocks=True)
-    template = jinja_env.get_template(j2_template_fname)
-    rendered = template.render(data=data)
+    template = jinja_env.get_template(j2_template)
 
-    with open(f"/tmp/{NEW_REPO_NAME}/{hcl_fname}", "w") as file_obj:
-        file_obj.write(rendered)
-
-    return True
+    return template.render(data=json_data)
 
 
-def github_org(base_url, org_name):
-    token = github_token()
+def github_org(base_url, org_name, token):
+    """Get GitHub Organization Object
+
+    Args:
+        base_url (str): Base URL of the GitHub Org.
+        org_name (str): name of the GitHub Org.
+        token (str): Access token to authenticated to the GitHub Org.
+
+    Returns:
+        obj: the GitHub Org.
+    """
+
     auth = Auth.Token(token)
+    # Since Census GitHub Enterprise server uses a private TLS certificate,
+    # the certificate veriification must be disabled.
     g = Github(auth=auth, base_url=base_url, verify=False)
 
-    return g.get_organization(org_name), token
+    return g.get_organization(org_name)
 
 
 def github_token():
+    """Retrieve GitHub access token from AWS SSM Parameter store
 
-    # session = boto3.session.Session(profile_name=PROFILE)
-    # ssm = session.client(service_name="ssm", region_name=REGION_NAME)
+    Returns:
+        str: The GitHub access token.
+    """
     ssm = boto3.client("ssm")
     try:
         token = ssm.get_parameter(Name=SECRET_NAME, WithDecryption=True)["Parameter"][
@@ -149,7 +227,8 @@ def github_token():
 
 def remove_readonly(func, path, _):
     """
-    Clear the readonly bit and reattempt the removal
+    Clear the readonly bit and reattempt the removal.
+    This function is used by `shutil.rmtree` function.
     """
     os.chmod(path, stat.S_IWRITE)
     func(path)

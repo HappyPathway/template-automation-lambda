@@ -67,6 +67,7 @@ All done! ✨ 🍰 ✨
 
 ## NOTES
 
+- A GitHub Personal Access Token (PAT) is required to access the Census GitHub Enterprise Server. The PAT should be securely stored in AWS Systems Manager Parameter Store.
 - This lambda function relies on [`git-lambda-layer`](https://github.com/lambci/git-lambda-layer), which must be uploaded to the S3 bucket specified in samconfig.toml prior to deployment.
 - The REST API for this Lambda function is configured to be accessed using an API key.
 - To access the Census GitHub Enterprise Server, a VPC with private subnets connected to the server must be attached.
