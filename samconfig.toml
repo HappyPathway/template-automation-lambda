@@ -1,7 +1,7 @@
 version = 0.1
 [default.deploy.parameters]
-stack_name = "eks-automation"
-s3_bucket = "eks-automation-s3-bucket"
+stack_name = "eks-automation-lambda"
+s3_bucket = "eks-automation-lambda-s3-bucket"
 region = "us-gov-east-1"
 profile = "229685449397-csvd-dev-gov"
 confirm_changeset = false
