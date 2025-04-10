@@ -5,7 +5,6 @@
 This repository contains source code and supporting files for a serverless application that you can deploy with the SAM CLI.
 The application uses a Lambda function to process JSON input data and create a new GitHub repo for **Census EKS CI/CD pipeline**.
 
-
 ## Getting Started
 
 First of all, you need access to an AWS account with adequate permission to which the resources will be deployed.
@@ -33,7 +32,6 @@ You may also want to adjust other settings (API Usage Plan, tags, etc.) in the `
 You may need to submit a support ticket to request the installation of these tools on your laptop.
 
 ### Installing
-
 
 - Clone this repository:
 
@@ -85,6 +83,26 @@ You may need to submit a support ticket to request the installation of these too
 
 - Test:
 
+  The input `JSON` payload is in the following format:
+
+  ```json
+  {
+    "project_name": "string",
+    "eks_settings": {
+      "attrs": {
+        "attribute1": "value1",
+        "attribute2": "value2",
+        ...
+      },
+      "tags" : {
+        "key1": "value1",
+        "key2": "value2",
+        ...
+      }
+    }
+  }
+  ```
+
   Get the `API Key`:
 
   ```sh
@@ -94,26 +112,29 @@ You may need to submit a support ticket to request the installation of these too
   ```sh
   curl -X POST -H "X-API-Key: {API Key}"  https://{API Gateway endpoint URL} -d '
   {
-    "attrs": {
-      "account_name": "lab-dev-ew",
-      "aws_region": "us-gov-east-1",
-      "cluster_mailing_list": "matthew.c.morgan@census.gov",
-      "cluster_name": "csvd-platform-lab-mcm",
-      "eks_instance_disk_size": 100,
-      "eks_ng_desired_size": 2,
-      "eks_ng_max_size": 10,
-      "eks_ng_min_size": 2,
-      "environment": "development",
-      "environment_abbr": "dev",
-      "organization": "census:ocio:csvd",
-      "finops_project_name": "csvd_platformbaseline",
-      "finops_project_number": "fs0000000078",
-      "finops_project_role": "csvd_platformbaseline_app",
-      "vpc_domain_name": "dev.lab.csp2.census.gov",
-      "vpc_name": "vpc3-lab-dev"
-    },
-    "tags" : {
-      "slim:schedule": "8:00-17:00"
+    "project_name": "eks-automation-lambda-test",
+    "eks_settings": {
+      "attrs": {
+        "account_name": "lab-dev-ew",
+        "aws_region": "us-gov-east-1",
+        "cluster_mailing_list": "someone@census.gov",
+        "cluster_name": "csvd-platform-lab-mcm",
+        "eks_instance_disk_size": 100,
+        "eks_ng_desired_size": 2,
+        "eks_ng_max_size": 10,
+        "eks_ng_min_size": 2,
+        "environment": "development",
+        "environment_abbr": "dev",
+        "organization": "census:ocio:csvd",
+        "finops_project_name": "csvd_platformbaseline",
+        "finops_project_number": "fs0000000078",
+        "finops_project_role": "csvd_platformbaseline_app",
+        "vpc_domain_name": "dev.lab.csp2.census.gov",
+        "vpc_name": "vpc3-lab-dev"
+      },
+      "tags" : {
+        "slim:schedule": "8:00-17:00"
+      }
     }
   }
   '

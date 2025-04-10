@@ -30,12 +30,9 @@ ORG_NAME = "SCT-Engineering"
 SECRET_NAME = "/dev/eks_automation_github_token"
 
 ORIG_REPO_NAME = "platform-tg-infra"
-NEW_REPO_NAME = "eks-automation-lambda-test1"
 
 TEMPLATE_FILE_NAME = "eks.hcl.j2"
 HCL_FILE_NAME = "eks.hcl"
-
-# DATA_FILE_NAME = "data.json"
 
 # Initialize the logger
 logger = logging.getLogger()
@@ -57,12 +54,21 @@ def lambda_handler(event, context):
 
     # For test, load input data from a local file.
     # input_data = ""
-    # with open(DATA_FILE_NAME, "r") as file:
+    # with open("data.json", "r") as file:
     #     input_data = json.load(file)
 
+    input_data = json.loads(event["body"])
+
+    project_name = input_data["project_name"]
+    eks_settings = input_data["eks_settings"]
+    if not project_name:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "Missing project name"}),
+        }
+
     try:
-        input_data = json.loads(event["body"])
-        rendered = operate_github(NEW_REPO_NAME, input_data, HCL_FILE_NAME)
+        rendered = operate_github(project_name, eks_settings, HCL_FILE_NAME)
     except Exception as e:  # pylint: disable=broad-exception-caught
         return {"statusCode": 400, "body": json.dumps({"error": str(e)})}
 
@@ -73,13 +79,13 @@ def lambda_handler(event, context):
     }
 
 
-def operate_github(new_repo_name, json_data, output_hcl):
+def operate_github(new_repo_name, eks_settings, output_hcl):
     """Clone a GitHub repo, add an EKS parameter file rendered
     from a template and the input JSON dta, and push to a new repo.
 
     Args:
         new_repo_name (str): Name of the new GitHub repo.
-        json_data (json): Input JSON data with all the EKS parameter values.
+        eks_settings (json): Input JSON data with all the EKS parameter values.
         output_hcl (str): Name of the EKS parameter file in HCL format.
 
     Returns:
@@ -123,7 +129,7 @@ def operate_github(new_repo_name, json_data, output_hcl):
         current_branch.rename("main", force=True)
 
     # Render the j2 template using the input data.
-    rendered = render_j2_template(json_data, TEMPLATE_FILE_NAME)
+    rendered = render_j2_template(eks_settings, TEMPLATE_FILE_NAME)
     # Write the renderd data to a file in the local staging repository root directory
     with open(f"/tmp/{new_repo_name}/{output_hcl}", "w") as file:
         file.write(rendered)
@@ -168,11 +174,11 @@ def get_repo(org, repo_name, create=False):
     return repo
 
 
-def render_j2_template(json_data, j2_template, j2_template_dir="templates/"):
+def render_j2_template(eks_settings, j2_template, j2_template_dir="templates/"):
     """Render the j2 template with the input JSON data
 
     Args:
-        json_data (json): input data in JSON format.
+        eks_settings (json): input data in JSON format.
         j2_template (j2): Name of the template file to generate the output.
         j2_template_dir (str, optional): The directory where the templates are stored. Defaults to "templates/".
 
@@ -184,7 +190,7 @@ def render_j2_template(json_data, j2_template, j2_template_dir="templates/"):
     jinja_env = Environment(loader=FileSystemLoader(j2_template_dir), trim_blocks=True)
     template = jinja_env.get_template(j2_template)
 
-    return template.render(data=json_data)
+    return template.render(data=eks_settings)
 
 
 def github_org(base_url, org_name, token):
