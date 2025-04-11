@@ -1,16 +1,15 @@
-##################################################################
-# Script
-# @usage python main.py
-##################################################################
-# from __future__ import print_function
+####################################################################################
+# This Lambda function takes JSON input, processes it using a Jinja2 template,
+# and writes the output to a file in a cloned GitHub repository.
+# The changes are then committed and pushed to the Census GitHub Enterprise Server,
+# creating a new repository for the Census EKS CI/CD pipeline.
+####################################################################################
 
 import os
 import stat
 import subprocess
 import shutil
 import logging
-
-# import requests
 
 import json
 from jinja2 import Environment, FileSystemLoader
@@ -36,7 +35,7 @@ HCL_FILE_NAME = "eks.hcl"
 
 # Initialize the logger
 logger = logging.getLogger()
-logger.setLevel("INFO")
+logger.setLevel("INFO")  # Set to "ERROR" to reduce logging messages.
 
 
 # pylint: disable=unused-argument

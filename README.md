@@ -3,7 +3,9 @@
 ## Description
 
 This repository contains source code and supporting files for a serverless application that you can deploy with the SAM CLI.
-The application uses a Lambda function to process JSON input data and create a new GitHub repo for **Census EKS CI/CD pipeline**.
+The application uses an AWS Lambda function to process JSON input and write it to a cloned repository.
+The changes are then committed and pushed to the Census GitHub Enterprise Server, creating a new repository
+for the Census EKS CI/CD pipeline.
 
 ## Getting Started
 
@@ -15,8 +17,8 @@ is required to access the Census GitHub Enterprise Server.
 The `PAT` must be securely stored in `AWS Systems Manager Parameter Store`. The parameter name must match the value of the
 "SECRET_NAME" constant defined in the `eks_automation/app.py` file.
 
-To access the Census GitHub Enterprise Server, a VPC with private subnets connected to the server must also be attached.
-The VPC configuration is set in the `template.yaml` file. Change the `Subnet IDs` and `Security Group IDs` as needed.
+To access the Census GitHub Enterprise Server, a VPC with private subnets and a route to the server must be attached.
+The VPC configuration is set in the `template.yaml` file. Update the `Subnet IDs` and `Security Group IDs` as needed.
 
 You may also want to adjust other settings (API Usage Plan, tags, etc.) in the `template.yaml` file.
 
@@ -83,7 +85,7 @@ You may need to submit a support ticket to request the installation of these too
 
 - Test:
 
-  The input `JSON` payload is in the following format:
+  The `JSON` input payload is in the following format:
 
   ```json
   {
@@ -140,7 +142,7 @@ You may need to submit a support ticket to request the installation of these too
   '
   ```
 
-  Replace `{API Key}` with the result of the last command and `{API Gateway endpoint URL}` with the value saved from the `sam deploy` command output.
+  Replace `{API Key}` with the API key we just retrieved, and `{API Gateway endpoint URL}` with the value saved from the `sam deploy` command output.
 
 ## Resources
 
