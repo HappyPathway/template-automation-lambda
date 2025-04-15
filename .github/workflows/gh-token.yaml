@@ -12,8 +12,8 @@ jobs:
     with:
       aws_region: 'us-east-1'
       secret_name: '/dev/eks_automation_github_token'  # This matches the SECRET_NAME in app.py
-      github_app_id: ${{ vars.GITHUB_APP_ID }}
-      github_installation_id: ${{ vars.GITHUB_INSTALLATION_ID }}
+      github_app_id: ${{ vars.GH_APP_ID }}
+      github_app_installation_id: ${{ vars.GH_APP_INSTALLATION_ID }}
       use_ecs_credentials: true
     secrets:
-      github_app_private_key: ${{ secrets.GITHUB_APP_PRIVATE_KEY }}
+      github_app_pem_file: ${{ secrets.GH_APP_PEM_FILE }}
