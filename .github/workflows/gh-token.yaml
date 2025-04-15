@@ -1,0 +1,19 @@
+name: GitHub Token Refresh
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'  # Runs every 5 minutes
+  workflow_dispatch:  # Allows manual triggering
+
+jobs:
+  refresh-token:
+    name: Refresh GitHub Token
+    uses: CSVD/centralized-actions/.github/workflows/upload-github-token.yml@main
+    with:
+      aws_region: 'us-east-1'
+      secret_name: '/dev/eks_automation_github_token'  # This matches the SECRET_NAME in app.py
+      github_app_id: ${{ vars.GITHUB_APP_ID }}
+      github_installation_id: ${{ vars.GITHUB_INSTALLATION_ID }}
+      use_ecs_credentials: true
+    secrets:
+      github_app_private_key: ${{ secrets.GITHUB_APP_PRIVATE_KEY }}
