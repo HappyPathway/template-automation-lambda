@@ -1,25 +1,3 @@
-provider "aws" {
-  default_tags {
-    tags = {
-      organization          = "census:ocio:csvd"
-      finops_project_name   = "csvd_platformbaseline"
-      finops_project_number = "fs0000000078"
-      finops_project_role   = "csvd_platformbaseline_app"
-    }
-  }
-}
-
-locals {
-  common_tags = {
-    environment            = var.environment
-    environment_abbr      = var.environment_abbr
-    organization          = var.organization
-    finops_project_name   = var.finops_project_name
-    finops_project_number = var.finops_project_number
-    finops_project_role   = var.finops_project_role
-  }
-}
-
 # API Gateway
 resource "aws_api_gateway_rest_api" "eks_automation" {
   name = "eks-automation-api"
@@ -33,17 +11,17 @@ resource "aws_api_gateway_resource" "eks_automation" {
 }
 
 resource "aws_api_gateway_method" "eks_automation" {
-  rest_api_id   = aws_api_gateway_rest_api.eks_automation.id
-  resource_id   = aws_api_gateway_resource.eks_automation.id
-  http_method   = "POST"
-  authorization = "NONE"
+  rest_api_id      = aws_api_gateway_rest_api.eks_automation.id
+  resource_id      = aws_api_gateway_resource.eks_automation.id
+  http_method      = "POST"
+  authorization    = "NONE"
   api_key_required = true
 }
 
 resource "aws_api_gateway_integration" "lambda" {
-  rest_api_id = aws_api_gateway_rest_api.eks_automation.id
-  resource_id = aws_api_gateway_resource.eks_automation.id
-  http_method = aws_api_gateway_method.eks_automation.http_method
+  rest_api_id             = aws_api_gateway_rest_api.eks_automation.id
+  resource_id             = aws_api_gateway_resource.eks_automation.id
+  http_method             = aws_api_gateway_method.eks_automation.http_method
   integration_http_method = "POST"
   type                    = "AWS_PROXY"
   uri                     = aws_lambda_function.eks_automation.invoke_arn
@@ -90,7 +68,7 @@ resource "aws_api_gateway_method_response" "options" {
   resource_id = aws_api_gateway_resource.eks_automation.id
   http_method = aws_api_gateway_method.options.http_method
   status_code = "200"
-  
+
   response_parameters = {
     "method.response.header.Access-Control-Allow-Headers" = true,
     "method.response.header.Access-Control-Allow-Methods" = true,
@@ -145,20 +123,20 @@ resource "aws_api_gateway_usage_plan_key" "eks_automation" {
 
 # Lambda Layer
 resource "aws_lambda_layer_version" "git" {
-  filename            = "layer.zip"  # Make sure to create this zip file with Git binaries
-  layer_name         = "git-lambda-layer"
-  description        = "Git Lambda Layer"
+  filename            = "layer.zip" # Make sure to create this zip file with Git binaries
+  layer_name          = "git-lambda-layer"
+  description         = "Git Lambda Layer"
   compatible_runtimes = ["python3.9", "python3.10", "python3.11"]
 }
 
 # Lambda Function
 resource "aws_lambda_function" "eks_automation" {
-  filename      = "eks_automation.zip"  # Make sure to create this zip file
+  filename      = "eks_automation.zip" # Make sure to create this zip file
   function_name = "eks-automation"
-  role         = aws_iam_role.lambda_role.arn
-  handler      = "app.lambda_handler"
-  runtime      = "python3.11"
-  timeout      = var.lambda_timeout
+  role          = aws_iam_role.lambda_role.arn
+  handler       = "app.lambda_handler"
+  runtime       = "python3.11"
+  timeout       = var.lambda_timeout
 
   vpc_config {
     subnet_ids         = var.vpc_subnet_ids
@@ -210,9 +188,9 @@ resource "aws_iam_role_policy" "lambda_ssm_access" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "SSMDescribeParametersPolicy"
-        Effect = "Allow"
-        Action = ["ssm:DescribeParameters"]
+        Sid      = "SSMDescribeParametersPolicy"
+        Effect   = "Allow"
+        Action   = ["ssm:DescribeParameters"]
         Resource = "*"
       },
       {
