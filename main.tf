@@ -1,9 +1,11 @@
 provider "aws" {
-  default_tags = {
-    organization          = "census:ocio:csvd"
-    finops_project_name   = "csvd_platformbaseline"
-    finops_project_number = "fs0000000078"
-    finops_project_role   = "csvd_platformbaseline_app"
+  default_tags {
+    tags = {
+      organization          = "census:ocio:csvd"
+      finops_project_name   = "csvd_platformbaseline"
+      finops_project_number = "fs0000000078"
+      finops_project_role   = "csvd_platformbaseline_app"
+    }
   }
 }
 
