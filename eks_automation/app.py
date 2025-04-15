@@ -137,7 +137,7 @@ def operate_github(new_repo_name, eks_settings, output_hcl):
 
     # Commit and push the changes.
     cloned_repo.index.add(output_hcl)
-    commit_message = "Add the EKS paramter file by the Lambda function"
+    commit_message = "Add the EKS parameter file by the Lambda function"
     cloned_repo.index.commit(commit_message)
     cloned_repo.git.push("--set-upstream", origin.name, "main", force=True)
 
