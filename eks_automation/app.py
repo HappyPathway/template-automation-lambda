@@ -26,9 +26,9 @@ from botocore.exceptions import ClientError
 
 CENSUS_GITHUB_API = "https://github.e.it.census.gov/api/v3"
 ORG_NAME = "SCT-Engineering"
-SECRET_NAME = "/dev/eks_automation_github_token"
+SECRET_NAME = "/eks-cluster-deployment/github_token"
 
-ORIG_REPO_NAME = "platform-tg-infra"
+ORIG_REPO_NAME = "template-eks-cluster"
 
 TEMPLATE_FILE_NAME = "eks.hcl.j2"
 HCL_FILE_NAME = "eks.hcl"
