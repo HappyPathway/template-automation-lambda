@@ -1,0 +1,117 @@
+# This is a basic workflow to help you get started with Actions
+name: Terraform Apply
+
+# Controls when the workflow will run
+on:
+  push:
+    branches:
+      - main
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.repo }}-${{ vars.terraform_workspace }}
+  
+permissions: write-all
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  Plan:
+    # The type of runner that the job will run on
+    runs-on: ["229685449397"]
+
+    env:
+      TF_WORKSPACE: ${{ vars.terraform_workspace }}
+      TF_CLI_ARGS_plan: -lock-timeout=30m
+      TF_CLI_ARGS_apply: -lock-timeout=30m
+      NO_PROXY: ${{ vars.NO_PROXY }}
+      
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      - uses: CSVD/gh-actions-checkout@v4
+        id: checkout
+        with:
+          persist-credentials: false
+
+      - name: git show
+        id: git_show
+        run: |
+          echo "commit_sha=$(git show | grep commit | head -1 | awk '{ print $NF }')" >> $GITHUB_ENV
+          echo "commit_sha=$(git show | grep commit | head -1 | awk '{ print $NF }')" >> $GITHUB_OUTPUT
+        
+      - name: AWS Auth
+        id: aws_auth
+        uses: CSVD/aws-auth@main
+        with:
+          ecs: true
+      
+      - name: Setup GITHUB Credentials
+        id: github_credentials
+        uses: CSVD/gh-auth@main
+        with:
+          github_app_pem_file: ${{ secrets.GH_APP_PEM_FILE }}
+          github_app_installation_id: ${{ vars.GH_APP_INSTALLATION_ID }}
+          github_base_url: "${{ github.server_url }}/"
+          
+      - name: Terraform Init
+        uses: CSVD/terraform-init@main
+        id: terraform_init
+        with:
+          commit_sha: ${{ env.commit_sha }}
+          checkout: false
+          terraform_version: "1.9.1"
+          workspace: ${{ vars.terraform_workspace }}
+          setup_terraform: true
+          terraform_init: true
+          cache_bucket: github-actions-assets-us-gov-west-1-229685449397
+        env:
+          GITHUB_TOKEN: ${{ steps.github_credentials.outputs.github_token }}
+          AWS_ACCESS_KEY_ID: ${{ steps.aws_auth.outputs.aws_access_key_id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.aws_auth.outputs.aws_secret_access_key }}
+          AWS_SESSION_TOKEN: ${{ steps.aws_auth.outputs.aws_session_token }}
+         
+      - name: Terraform Plan
+        uses: CSVD/terraform-plan@main
+        with:
+          terraform_version: "1.9.1"
+          workspace: ${{ vars.terraform_workspace }}
+          commit_sha: ${{ steps.terraform_init.outputs.commit_sha }}
+          varfile: varfiles/${{ vars.terraform_workspace }}.tfvars
+          download_cache: true
+          setup_terraform: false
+          cache_key: ${{ steps.terraform_init.outputs.s3_upload_path }}
+          cache_bucket: github-actions-assets-us-gov-west-1-229685449397
+        env:
+          AWS_ACCESS_KEY_ID: ${{ steps.aws_auth.outputs.aws_access_key_id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.aws_auth.outputs.aws_secret_access_key }}
+          AWS_SESSION_TOKEN: ${{ steps.aws_auth.outputs.aws_session_token }}
+          GITHUB_TOKEN: ${{ steps.github_credentials.outputs.github_token }}
+          GITHUB_OWNER: ${{ github.repository_owner }}
+          GITHUB_BASE_URL: "${{ github.server_url }}/"
+          HTTP_PROXY: http://proxy.tco.census.gov:3128
+          HTTPS_PROXY: http://proxy.tco.census.gov:3128
+          NO_PROXY: ".census.gov,169.254.169.254,148.129.*,10.*,172.18.*,172.22.*,172.23.*,172.24.*,172.25.*,.eks.amazonaws.com,.s3.amazonaws.com,.amazonaws.com" 
+
+      - name: Terraform Apply
+        uses: CSVD/terraform-apply@main
+        with:
+          terraform_version: "1.9.1"
+          workspace: ${{ vars.terraform_workspace }}
+          commit_sha: ${{ env.commit_sha }}
+          download_cache: true
+          setup_terraform: true
+          terraform_wrapper: false
+          cache_key: ${{ steps.terraform_init.outputs.s3_upload_path }}
+          cache_bucket: github-actions-assets-us-gov-west-1-229685449397
+        env:
+          AWS_ACCESS_KEY_ID: ${{ steps.aws_auth.outputs.aws_access_key_id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.aws_auth.outputs.aws_secret_access_key }}
+          AWS_SESSION_TOKEN: ${{ steps.aws_auth.outputs.aws_session_token }}
+          GITHUB_TOKEN: ${{ steps.github_credentials.outputs.github_token }}
+          GITHUB_OWNER: ${{ github.repository_owner }}
+          GITHUB_BASE_URL: "${{ github.server_url }}/"
+          HTTP_PROXY: http://proxy.tco.census.gov:3128
+          HTTPS_PROXY: http://proxy.tco.census.gov:3128
+          NO_PROXY: ".census.gov,169.254.169.254,148.129.*,10.*,172.18.*,172.22.*,172.23.*,172.24.*,172.25.*,.eks.amazonaws.com,.s3.amazonaws.com,.amazonaws.com"
+          
+          

@@ -1,0 +1,42 @@
+name: Terraform Validate
+on:
+  pull_request:
+  workflow_dispatch:
+  
+jobs:
+  
+  terraform-validate:
+    runs-on: "229685449397"
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: CSVD/gh-actions-checkout@v4
+    
+      - name: Setup Terraform
+        uses: CSVD/gh-actions-setup-terraform@v2
+        with:
+          terraform_version: '1.7.3'
+    
+      - name: Validate Terraform Configuration
+        id: validate
+        uses: CSVD/terraform-validate@main
+    
+      - name: Check Validation/Test Results
+        if: always()
+        run: |
+          # Set default values if outputs are empty
+          IS_VALID="${{ steps.validate.outputs.is_valid }}"
+          TESTS_PASSED="${{ steps.validate.outputs.tests_passed }}"
+          
+          # If outputs are empty, set them to false
+          [ -z "$IS_VALID" ] && IS_VALID="false"
+          [ -z "$TESTS_PASSED" ] && TESTS_PASSED="false"
+          
+          if [[ "$IS_VALID" != "true" || "$TESTS_PASSED" != "true" ]]; then
+            echo "Validation or test errors found:"
+            echo "${{ steps.validate.outputs.stderr }}"
+            exit 1
+          else
+            echo "All validations and tests passed successfully!"
+          fi
