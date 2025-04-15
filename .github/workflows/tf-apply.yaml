@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.repo }}-${{ vars.terraform_workspace }}
+  group: ${{ github.repo }}-deployment-${{ vars.terraform_workspace }}
   
 permissions: write-all
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
