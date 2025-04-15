@@ -48,3 +48,9 @@ variable "aws_region" {
   type        = string
   default     = "us-gov-west-2"
 }
+
+variable name {
+  description = "Name of the resource"
+  type        = string
+  default     = "eks-automation"
+}

@@ -1,6 +1,6 @@
 # API Gateway
 resource "aws_api_gateway_rest_api" "eks_automation" {
-  name = "eks-automation-api"
+  name = var.name
   tags = local.common_tags
 }
 
@@ -90,7 +90,7 @@ resource "aws_api_gateway_integration_response" "options" {
 }
 
 resource "aws_api_gateway_usage_plan" "eks_automation" {
-  name        = "eks-automation-usage-plan"
+  name        = "${var.name}-usage-plan"
   description = "Usage plan for EKS Automation API"
 
   api_stages {
@@ -112,7 +112,7 @@ resource "aws_api_gateway_usage_plan" "eks_automation" {
 }
 
 resource "aws_api_gateway_api_key" "eks_automation" {
-  name = "eks-automation-api-key"
+  name = "${var.name}-key"
 }
 
 resource "aws_api_gateway_usage_plan_key" "eks_automation" {
@@ -124,15 +124,15 @@ resource "aws_api_gateway_usage_plan_key" "eks_automation" {
 # Lambda Layer
 resource "aws_lambda_layer_version" "git" {
   filename            = "layer.zip" # Make sure to create this zip file with Git binaries
-  layer_name          = "git-lambda-layer"
-  description         = "Git Lambda Layer"
+  layer_name          = "${var.name}-lambda-layer"
+  description         = "${var.name} Lambda Layer"
   compatible_runtimes = ["python3.9", "python3.10", "python3.11"]
 }
 
 # Lambda Function
 resource "aws_lambda_function" "eks_automation" {
   filename      = "eks_automation.zip" # Make sure to create this zip file
-  function_name = "eks-automation"
+  function_name = "${var.name}-eks-automation"
   role          = aws_iam_role.lambda_role.arn
   handler       = "app.lambda_handler"
   runtime       = "python3.11"
@@ -156,7 +156,7 @@ resource "aws_lambda_function" "eks_automation" {
 
 # IAM Role for Lambda
 resource "aws_iam_role" "lambda_role" {
-  name = "eks-automation-lambda-role"
+  name = "${var.name}-lambda-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -181,7 +181,7 @@ resource "aws_iam_role_policy_attachment" "lambda_vpc_access" {
 }
 
 resource "aws_iam_role_policy" "lambda_ssm_access" {
-  name = "eks-automation-ssm-access"
+  name = "${var.name}-ssm-access"
   role = aws_iam_role.lambda_role.id
 
   policy = jsonencode({
