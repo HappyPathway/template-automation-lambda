@@ -10,7 +10,7 @@ jobs:
     name: Refresh GitHub Token
     uses: CSVD/centralized-actions/.github/workflows/upload-github-token.yml@main
     with:
-      aws_region: 'us-east-1'
+      aws_region: 'us-gov-west-1'
       secret_name: '/dev/eks_automation_github_token'  # This matches the SECRET_NAME in app.py
       github_app_id: ${{ vars.GH_APP_ID }}
       github_app_installation_id: ${{ vars.GH_APP_INSTALLATION_ID }}
