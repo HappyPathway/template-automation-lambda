@@ -1,4 +1,4 @@
-name = "eks-repo-automation"
+name = "eks-repo-done-right"
 # This file contains the variable values for the Terraform configuration.
 # It is used to set up the AWS Lambda function and its associated resources.
 # The values here are specific to the development environment and should be
@@ -21,11 +21,11 @@ finops_project_name   = "csvd_platformbaseline"
 finops_project_number = "fs0000000078"
 finops_project_role   = "csvd_platformbaseline_app"
 vpc_security_group_ids = [
-  "sg-0641c697588b9aa6b",
-  "sg-0cc69de0fa6f337c5"
+  "sg-03cbf2a626ed55c7e"
 ]
 vpc_subnet_ids = [
-  "subnet-062189d742937204e"
+  "subnet-05192178ac094f639",
+  "subnet-022370a5a03585376"
 ]
 lambda_timeout = 30
-aws_region     = "us-gov-west-1"
+aws_region     = "us-gov-east-1"
