@@ -218,6 +218,9 @@ class GitHubClient:
             tree (dict): Tree information from get_tree()
             target_dir (str): Directory to download files to
         """
+        # Ensure target directory exists even if there are no files
+        os.makedirs(target_dir, exist_ok=True)
+        
         for item in tree.get("tree", []):
             if item["type"] == "blob":
                 # Get the blob contents
@@ -391,6 +394,9 @@ class GitHubClient:
         Returns:
             str: The branch name that was cloned
         """
+        # Create the target directory if it doesn't exist
+        os.makedirs(target_dir, exist_ok=True)
+        
         try:
             if branch:
                 target_branch = branch
@@ -414,7 +420,6 @@ class GitHubClient:
 
         # Download all files
         logger.info(f"Downloading all files from {source_repo} using ref: heads/{target_branch}")
-        os.makedirs(target_dir, exist_ok=True)
         self.download_repository_files(source_repo, tree, target_dir)
 
         return target_branch
