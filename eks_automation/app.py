@@ -1,8 +1,7 @@
 ####################################################################################
-# This Lambda function takes JSON input, processes it using a Jinja2 template,
-# and writes the output to a file in a cloned GitHub repository.
-# The changes are then committed and pushed to the GitHub API,
-# creating a new repository for the EKS CI/CD pipeline.
+# This Lambda function takes JSON input and writes it directly to a config.json file
+# in a cloned GitHub repository. The changes are then committed and pushed to the 
+# GitHub API, creating a new repository for the EKS CI/CD pipeline.
 # This implementation uses only pure Python with requests library (no Git CLI dependency).
 ####################################################################################
 
@@ -14,32 +13,15 @@ import base64
 import time
 import requests
 import json
-from jinja2 import Environment, FileSystemLoader
 from urllib.parse import urlparse
 from datetime import datetime
 
 import boto3
 from botocore.exceptions import ClientError
-import os
-
-
-# Get configuration from environment variables with defaults
-GITHUB_API = os.environ.get("GITHUB_API")  # No default - must be configured
-ORG_NAME = os.environ.get("GITHUB_ORG_NAME")  # No default - must be configured 
-SECRET_NAME = os.environ.get("GITHUB_TOKEN_SECRET_NAME", "/eks-cluster-deployment/github_token")
-COMMIT_AUTHOR_EMAIL = os.environ.get("GITHUB_COMMIT_AUTHOR_EMAIL", "eks-automation@noreply.github.com")
-COMMIT_AUTHOR_NAME = os.environ.get("GITHUB_COMMIT_AUTHOR_NAME", "EKS Automation Lambda")
-SOURCE_VERSION = os.environ.get("TEMPLATE_SOURCE_VERSION")  # Optional - if not set, uses default branch
-
-ORIG_REPO_NAME = os.environ.get("TEMPLATE_REPO_NAME", "template-eks-cluster")
-
-TEMPLATE_FILE_NAME = os.environ.get("TEMPLATE_FILE_NAME", "eks.hcl.j2")
-HCL_FILE_NAME = os.environ.get("HCL_FILE_NAME", "eks.hcl")
 
 # Initialize the logger
 logger = logging.getLogger()
 logger.setLevel("INFO")  # Set to "ERROR" to reduce logging messages.
-
 
 class GitHubClient:
     """A class to interact with GitHub API without relying on external Git binaries.
@@ -48,17 +30,27 @@ class GitHubClient:
     branches, files, commits and other Git operations using only the requests library.
     """
     
-    def __init__(self, api_base_url, token, org_name):
+    def __init__(self, api_base_url, token, org_name, commit_author_name, commit_author_email, source_version=None, template_repo_name=None, config_file_name="config.json"):
         """Initialize the GitHub client
         
         Args:
             api_base_url (str): Base URL for the GitHub API
             token (str): GitHub access token
             org_name (str): GitHub organization name
+            commit_author_name (str): Name of the commit author
+            commit_author_email (str): Email of the commit author
+            source_version (str, optional): Version to use from template repo
+            template_repo_name (str, optional): Name of the template repository
+            config_file_name (str, optional): Name of the config file to write
         """
         self.api_base_url = api_base_url
         self.token = token
         self.org_name = org_name
+        self.commit_author_name = commit_author_name
+        self.commit_author_email = commit_author_email
+        self.source_version = source_version
+        self.template_repo_name = template_repo_name
+        self.config_file_name = config_file_name
         self.headers = self._create_headers()
         
     def _create_headers(self):
@@ -306,20 +298,21 @@ class GitHubClient:
         """
         api_url = f"{self.api_base_url}/repos/{self.org_name}/{repo_name}/git/commits"
         
+        # Add committer/author information
+        current_time = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        author_info = {
+            "name": self.commit_author_name,
+            "email": self.commit_author_email,
+            "date": current_time
+        }
+        
         data = {
             "message": message,
             "tree": tree_sha,
-            "parents": parent_shas
+            "parents": parent_shas,
+            "author": author_info,
+            "committer": author_info
         }
-        
-        # Add committer/author information
-        current_time = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-        data["author"] = {
-            "name": COMMIT_AUTHOR_NAME,
-            "email": COMMIT_AUTHOR_EMAIL,
-            "date": current_time
-        }
-        data["committer"] = data["author"]
         
         response = requests.post(api_url, headers=self.headers, json=data, verify=False)
         
@@ -391,14 +384,14 @@ class GitHubClient:
         logger.info(f"Getting file tree from {source_repo}")
         ref = None
         
-        if SOURCE_VERSION:
+        if self.source_version:
             try:
                 # Try to get the tag/release reference first
-                ref = f"tags/{SOURCE_VERSION}"
+                ref = f"tags/{self.source_version}"
                 tree_sha = self.get_reference_sha(source_repo, ref)
-                logger.info(f"Using source version: {SOURCE_VERSION}")
+                logger.info(f"Using source version: {self.source_version}")
             except Exception as e:
-                logger.warning(f"Failed to get version {SOURCE_VERSION}, falling back to default branch: {str(e)}")
+                logger.warning(f"Failed to get version {self.source_version}, falling back to default branch: {str(e)}")
                 ref = f"heads/{default_branch}"
                 tree_sha = self.get_reference_sha(source_repo, ref)
         else:
@@ -521,12 +514,6 @@ def lambda_handler(event, context):
     Returns:
         dict: Dict containing status message.
     """
-
-    # For test, load input data from a local file.
-    # input_data = ""
-    # with open("data.json", "r") as file:
-    #     input_data = json.load(file)
-
     input_data = json.loads(event["body"])
 
     project_name = input_data["project_name"]
@@ -538,7 +525,7 @@ def lambda_handler(event, context):
         }
 
     try:
-        rendered = operate_github(project_name, eks_settings, HCL_FILE_NAME)
+        operate_github(project_name, eks_settings)
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error(f"Error in operate_github: {str(e)}")
         return {"statusCode": 400, "body": json.dumps({"error": str(e)})}
@@ -546,12 +533,12 @@ def lambda_handler(event, context):
     return {
         "statusCode": 200,
         "headers": {"Access-Control-Allow-Origin": "*"},
-        "body": json.dumps({"result": rendered}),
+        "body": json.dumps({"result": "Success"}),
     }
 
 
-def operate_github(new_repo_name, eks_settings, output_hcl):
-    """Process template and create/update repository using GitHub API
+def operate_github(new_repo_name, eks_settings):
+    """Write EKS settings to config.json and create/update repository using GitHub API
     
     This implementation uses only the requests library and does not rely on git CLI
     or any external binaries.
@@ -559,14 +546,19 @@ def operate_github(new_repo_name, eks_settings, output_hcl):
     Args:
         new_repo_name (str): Name of the new GitHub repo.
         eks_settings (json): Input JSON data with all the EKS parameter values.
-        output_hcl (str): Name of the EKS parameter file in HCL format.
 
     Returns:
-        str: The rendered EKS parameter string.
+        None
     """
-
-    # Get GitHub access token
+    # Get GitHub access token and environment variables
     token = github_token()
+    github_api = os.environ.get("GITHUB_API")  # No default - must be configured
+    org_name = os.environ.get("GITHUB_ORG_NAME")  # No default - must be configured
+    commit_author_email = os.environ.get("GITHUB_COMMIT_AUTHOR_EMAIL", "eks-automation@example.com")
+    commit_author_name = os.environ.get("GITHUB_COMMIT_AUTHOR_NAME", "EKS Automation Lambda")
+    source_version = os.environ.get("TEMPLATE_SOURCE_VERSION")  # Optional
+    template_repo_name = os.environ.get("TEMPLATE_REPO_NAME", "template-eks-cluster")
+    config_file_name = "config.json"
     
     # Create work directory if it doesn't exist
     work_dir = f"/tmp/{new_repo_name}"
@@ -574,53 +566,40 @@ def operate_github(new_repo_name, eks_settings, output_hcl):
         shutil.rmtree(work_dir, ignore_errors=False, onerror=remove_readonly)
     os.makedirs(work_dir, exist_ok=True)
     
-    # Initialize GitHub client
-    github = GitHubClient(GITHUB_API, token, ORG_NAME)
+    # Initialize GitHub client with all required parameters
+    github = GitHubClient(
+        github_api, 
+        token, 
+        org_name,
+        commit_author_name,
+        commit_author_email,
+        source_version,
+        template_repo_name,
+        config_file_name
+    )
     
     # Get info about original repo
-    logger.info(f"Fetching original repository information: {ORIG_REPO_NAME}")
-    orig_repo = github.get_repository(ORIG_REPO_NAME)
+    logger.info(f"Fetching original repository information: {template_repo_name}")
+    orig_repo = github.get_repository(template_repo_name)
     
     # Get or create the new repository
     logger.info(f"Getting or creating repository: {new_repo_name}")
     new_repo = github.get_repository(new_repo_name, create=True)
     
     # Clone the original repository contents
-    github.clone_repository_contents(ORIG_REPO_NAME, work_dir)
+    github.clone_repository_contents(template_repo_name, work_dir)
     
-    # Render the template and write to file
-    rendered = render_j2_template(eks_settings, TEMPLATE_FILE_NAME)
-    output_file_path = os.path.join(work_dir, output_hcl)
-    
-    logger.info(f"Writing rendered template to {output_file_path}")
+    # Write EKS settings directly to config.json
+    output_file_path = os.path.join(work_dir, config_file_name)
+    logger.info(f"Writing EKS settings to {output_file_path}")
     with open(output_file_path, "w") as file:
-        file.write(rendered)
+        json.dump(eks_settings, file, indent=2)
     
     # Commit all files to the new repository
-    commit_message = "Add the EKS parameter file by the Lambda function"
+    commit_message = "Add the EKS configuration file by the Lambda function"
     github.commit_repository_contents(new_repo_name, work_dir, commit_message)
     
     logger.info(f"Successfully updated {new_repo_name} repository")
-    return rendered
-
-
-def render_j2_template(eks_settings, j2_template, j2_template_dir="templates/"):
-    """Render the j2 template with the input JSON data
-
-    Args:
-        eks_settings (json): input data in JSON format.
-        j2_template (j2): Name of the template file to generate the output.
-        j2_template_dir (str, optional): The directory where the templates are stored. Defaults to "templates/".
-
-    Returns:
-        str: Rendered template string.
-    """
-
-    # Render template
-    jinja_env = Environment(loader=FileSystemLoader(j2_template_dir), trim_blocks=True)
-    template = jinja_env.get_template(j2_template)
-
-    return template.render(data=eks_settings)
 
 
 def github_token():
