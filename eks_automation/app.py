@@ -23,6 +23,9 @@ from botocore.exceptions import ClientError
 logger = logging.getLogger()
 logger.setLevel("INFO")  # Set to "ERROR" to reduce logging messages.
 
+# Get environment variables
+SECRET_NAME = os.environ["SECRET_NAME"]
+
 class GitHubClient:
     """A class to interact with GitHub API without relying on external Git binaries.
     
