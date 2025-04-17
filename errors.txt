@@ -1,0 +1,103 @@
+=================================== FAILURES ===================================
+_______________ TestGitHubClientIntegration.test_file_operations _______________
+self = <eks_automation.tests.test_github_client_integration.TestGitHubClientIntegration object at 0x7f6a6141d640>
+integration_client = <eks_automation.app.GitHubClient object at 0x7f6a6141dbb0>
+temp_repo_name = 'temp-test-repo-fc9ad0f3'
+cleanup_repo = <function cleanup_repo.<locals>._register_repo at 0x7f6a6137dee0>
+tmp_path = PosixPath('/tmp/pytest-of-runner/pytest-0/test_file_operations0')
+    def test_file_operations(self, integration_client, temp_repo_name, cleanup_repo, tmp_path):
+        """Test file operations with real repository"""
+        repo_name = cleanup_repo(temp_repo_name)
+    
+        # Create new repository
+        repo = integration_client.get_repository(repo_name, create=True)
+    
+        # Create a test file
+        test_content = {
+            "test": True,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    
+        # Write test content to work directory
+        work_dir = str(tmp_path)
+        os.makedirs(work_dir, exist_ok=True)
+        test_file = os.path.join(work_dir, "test-config.json")
+    
+        with open(test_file, "w") as f:
+            json.dump(test_content, f, indent=2)
+    
+        # Commit the file
+>       integration_client.commit_repository_contents(
+            repo_name,
+            work_dir,
+            "Test commit from integration tests"
+        )
+tests/test_github_client_integration.py:110: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+app.py:446: in commit_repository_contents
+    blob_sha = self.create_blob(repo_name, file_content)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+self = <eks_automation.app.GitHubClient object at 0x7f6a6141dbb0>
+repo_name = 'temp-test-repo-fc9ad0f3'
+content = b'{\n  "test": true,\n  "timestamp": "2025-04-17T16:25:48.668975"\n}'
+    def create_blob(self, repo_name, content):
+        """Create a blob in the repository
+    
+        Args:
+            repo_name (str): Name of the repository
+            content (bytes): Content of the blob
+    
+        Returns:
+            str: SHA of the created blob
+        """
+        api_url = f"{self.api_base_url}/repos/{self.org_name}/{repo_name}/git/blobs"
+    
+        # Base64 encode the content
+        content_b64 = base64.b64encode(content).decode('utf-8')
+    
+        data = {
+            "content": content_b64,
+            "encoding": "base64"
+        }
+    
+        response = requests.post(api_url, headers=self.headers, json=data, verify=False)
+    
+        if response.status_code in (201, 200):
+            return response.json()["sha"]
+        else:
+            error_message = f"Failed to create blob for {repo_name}: {response.status_code} - {response.text}"
+            logger.error(error_message)
+>           raise Exception(error_message)
+E           Exception: Failed to create blob for temp-test-repo-fc9ad0f3: 409 - {"message":"Git Repository is empty.","documentation_url":"https://docs.github.com/rest/git/blobs#create-a-blob","status":"409"}
+app.py:256: Exception
+------------------------------ Captured log call -------------------------------
+INFO     root:app.py:81 Checking if repository temp-test-repo-fc9ad0f3 exists
+INFO     root:app.py:89 Creating repository temp-test-repo-fc9ad0f3
+            "content": content_b64,
+            "encoding": "base64"
+        }
+    
+        response = requests.post(api_url, headers=self.headers, json=data, verify=False)
+    
+        if response.status_code in (201, 200):
+            return response.json()["sha"]
+        else:
+            error_message = f"Failed to create blob for {repo_name}: {response.status_code} - {response.text}"
+            logger.error(error_message)
+>           raise Exception(error_message)
+E           Exception: Failed to create blob for temp-test-repo-e0e2ba0e: 409 - {"message":"Git Repository is empty.","documentation_url":"https://docs.github.com/rest/git/blobs#create-a-blob","status":"409"}
+app.py:256: Exception
+------------------------------ Captured log call -------------------------------
+INFO     root:app.py:81 Checking if repository temp-test-repo-e0e2ba0e exists
+INFO     root:app.py:89 Creating repository temp-test-repo-e0e2ba0e
+ERROR    root:app.py:255 Failed to create blob for temp-test-repo-e0e2ba0e: 409 - {"message":"Git Repository is empty.","documentation_url":"https://docs.github.com/rest/git/blobs#create-a-blob","status":"409"}
+=============================== warnings summary ===============================
+tests/test_github_client_integration.py: 14 warnings
+  /opt/hostedtoolcache/Python/3.9.22/x64/lib/python3.9/site-packages/urllib3/connectionpool.py:1064: InsecureRequestWarning: Unverified HTTPS request is being made to host 'api.github.com'. Adding certificate verification is strongly advised. See: https://urllib3.readthedocs.io/en/1.26.x/advanced-usage.html#ssl-warnings
+    warnings.warn(
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_github_client_integration.py::TestGitHubClientIntegration::test_file_operations - Exception: Failed to create blob for temp-test-repo-fc9ad0f3: 409 - {"message":"Git Repository is empty.","documentation_url":"https://docs.github.com/rest/git/blobs#create-a-blob","status":"409"}
+FAILED tests/test_github_client_integration.py::TestGitHubClientIntegration::test_branch_operations - Exception: Failed to create blob for temp-test-repo-e0e2ba0e: 409 - {"message":"Git Repository is empty.","documentation_url":"https://docs.github.com/rest/git/blobs#create-a-blob","status":"409"}
+=========== 2 failed, 1 passed, 12 deselected, 14 warnings in 4.33s ============
+Error: Process completed with exit code 1.

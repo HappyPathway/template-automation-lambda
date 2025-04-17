@@ -147,7 +147,8 @@ class TestGitHubClientIntegration:
         integration_client.commit_repository_contents(
             repo_name,
             work_dir,
-            "Initial commit"
+            "Initial commit",
+            branch="main"
         )
         
         # Create a new branch
@@ -166,7 +167,8 @@ class TestGitHubClientIntegration:
         integration_client.commit_repository_contents(
             repo_name,
             work_dir,
-            "Update in test branch"
+            "Update in test branch",
+            branch="test-branch"
         )
         
         # Verify the changes
@@ -175,8 +177,16 @@ class TestGitHubClientIntegration:
         
         # Clone and verify main branch
         main_dir = os.path.join(clone_dir, "main")
-        integration_client.clone_repository_contents(repo_name, main_dir)
+        integration_client.clone_repository_contents(repo_name, main_dir, branch="main")
         
         with open(os.path.join(main_dir, "test.txt"), "r") as f:
             main_content = f.read()
         assert main_content == "main branch content"
+        
+        # Clone and verify test branch contents
+        test_dir = os.path.join(clone_dir, "test")
+        integration_client.clone_repository_contents(repo_name, test_dir, branch="test-branch")
+        
+        with open(os.path.join(test_dir, "test.txt"), "r") as f:
+            test_content = f.read()
+        assert test_content == "test branch content"

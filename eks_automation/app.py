@@ -84,30 +84,44 @@ class GitHubClient:
         if response.status_code == 200:
             # Repository exists
             return response.json()
-        elif response.status_code == 404 and create:
-            # Repository doesn't exist, create it
-            logger.info(f"Creating repository {repo_name}")
-            create_url = f"{self.api_base_url}/orgs/{self.org_name}/repos"
-            repo_data = {
-                "name": repo_name,
-                "description": "EKS Automation CI/CD Pipeline Repo",
-                "private": True
-            }
-            create_response = requests.post(
-                create_url, 
-                headers=self.headers, 
-                json=repo_data,
-                verify=False
-            )
-            
-            if create_response.status_code in (201, 200):
-                return create_response.json()
+        elif response.status_code == 404:
+            if create:
+                # Repository doesn't exist, create it
+                logger.info(f"Creating repository {repo_name}")
+                create_url = f"{self.api_base_url}/orgs/{self.org_name}/repos"
+                repo_data = {
+                    "name": repo_name,
+                    "description": "EKS Automation CI/CD Pipeline Repo",
+                    "private": True,
+                    "auto_init": True,  # Initialize with README
+                    "default_branch": "main",
+                    "allow_squash_merge": True,
+                    "allow_merge_commit": True,
+                    "allow_rebase_merge": True,
+                    "delete_branch_on_merge": True,
+                    "enable_branch_protection": False  # Disable branch protection
+                }
+                create_response = requests.post(
+                    create_url, 
+                    headers=self.headers, 
+                    json=repo_data,
+                    verify=False
+                )
+                
+                if create_response.status_code in (201, 200):
+                    # Wait briefly for repository initialization
+                    time.sleep(2)
+                    return create_response.json()
+                else:
+                    error_message = f"Failed to create repository: {create_response.status_code} - {create_response.text}"
+                    logger.error(error_message)
+                    raise Exception(error_message)
             else:
-                error_message = f"Failed to create repository: {create_response.status_code} - {create_response.text}"
+                error_message = f"Repository {repo_name} not found and create=False"
                 logger.error(error_message)
                 raise Exception(error_message)
         else:
-            error_message = f"Repository {repo_name} not found and create=False"
+            error_message = f"Unexpected response when getting repository: {response.status_code} - {response.text}"
             logger.error(error_message)
             raise Exception(error_message)
     
@@ -366,64 +380,63 @@ class GitHubClient:
             logger.error(error_message)
             raise Exception(error_message)
             
-    def clone_repository_contents(self, source_repo, target_dir):
+    def clone_repository_contents(self, source_repo, target_dir, branch=None):
         """Clone a repository's contents to a local directory using GitHub API
         
         Args:
             source_repo (str): Name of the source repository
             target_dir (str): Target directory to download files to
+            branch (str, optional): Branch to clone from. If None, uses default branch.
             
         Returns:
-            str: The default branch name of the repository
+            str: The branch name that was cloned
         """
-        # Get default branch of original repo for fallback
-        default_branch = self.get_default_branch(source_repo)
-        logger.info(f"Default branch for {source_repo}: {default_branch}")
-        
-        # Get tree from original repository
-        logger.info(f"Getting file tree from {source_repo}")
-        ref = None
-        
-        if self.source_version:
-            try:
-                # Try to get the tag/release reference first
-                ref = f"tags/{self.source_version}"
-                tree_sha = self.get_reference_sha(source_repo, ref)
-                logger.info(f"Using source version: {self.source_version}")
-            except Exception as e:
-                logger.warning(f"Failed to get version {self.source_version}, falling back to default branch: {str(e)}")
-                ref = f"heads/{default_branch}"
-                tree_sha = self.get_reference_sha(source_repo, ref)
-        else:
-            # Use default branch
-            ref = f"heads/{default_branch}"
-            tree_sha = self.get_reference_sha(source_repo, ref)
-        
+        try:
+            if branch:
+                target_branch = branch
+                # Try to get the branch's reference directly
+                tree_sha = self.get_reference_sha(source_repo, f"heads/{target_branch}")
+            else:
+                # If no branch specified, use default branch
+                target_branch = self.get_default_branch(source_repo)
+                tree_sha = self.get_reference_sha(source_repo, f"heads/{target_branch}")
+        except Exception as e:
+            logger.warning(f"Failed to get reference for {branch or 'default branch'}: {str(e)}")
+            target_branch = branch or "main"
+            # If we can't get the reference, the branch might not exist yet
+            tree = {"tree": []}
+            self.download_repository_files(source_repo, tree, target_dir)
+            return target_branch
+
+        # Get the full tree for the branch
+        logger.info(f"Getting file tree from {source_repo} for branch {target_branch}")
         tree = self.get_tree(source_repo, tree_sha, recursive=True)
-        
-        # Download all files from original repo to work directory
-        logger.info(f"Downloading all files from {source_repo} using ref: {ref}")
+
+        # Download all files
+        logger.info(f"Downloading all files from {source_repo} using ref: heads/{target_branch}")
+        os.makedirs(target_dir, exist_ok=True)
         self.download_repository_files(source_repo, tree, target_dir)
-        
-        return default_branch
+
+        return target_branch
     
-    def commit_repository_contents(self, repo_name, work_dir, commit_message):
+    def commit_repository_contents(self, repo_name, work_dir, commit_message, branch=None):
         """Commit all files from a directory to a repository
         
         Args:
             repo_name (str): Name of the repository
             work_dir (str): Directory containing the files to commit
             commit_message (str): Commit message
+            branch (str, optional): Branch to commit to. If None, uses default branch.
             
         Returns:
-            str: The default branch name of the repository
+            str: The branch name that was committed to
         """
         # First, get the current state of the target repository
         try:
-            target_default_branch = self.get_default_branch(repo_name)
+            target_branch = branch or self.get_default_branch(repo_name)
         except Exception:
             # If we can't get the default branch, it might be a new repo
-            target_default_branch = "main"
+            target_branch = branch or "main"
         
         # Upload all files to the repository
         tree_items = []
@@ -456,7 +469,7 @@ class GitHubClient:
         # Try to get the latest commit SHA for the branch
         # If it doesn't exist, we'll create it
         try:
-            latest_commit_sha = self.get_reference_sha(repo_name, f"heads/{target_default_branch}")
+            latest_commit_sha = self.get_reference_sha(repo_name, f"heads/{target_branch}")
             latest_commit = self.get_commit(repo_name, latest_commit_sha)
             base_tree_sha = latest_commit["tree"]["sha"]
         except Exception:
@@ -488,18 +501,18 @@ class GitHubClient:
         try:
             self.update_reference(
                 repo_name, 
-                f"heads/{target_default_branch}", 
+                f"heads/{target_branch}", 
                 new_commit_sha
             )
         except Exception:
             # If the reference doesn't exist, create it
             self.create_reference(
                 repo_name, 
-                f"refs/heads/{target_default_branch}", 
+                f"refs/heads/{target_branch}", 
                 new_commit_sha
             )
         
-        return target_default_branch
+        return target_branch
 
 
 # pylint: disable=unused-argument
@@ -595,9 +608,9 @@ def operate_github(new_repo_name, eks_settings):
     with open(output_file_path, "w") as file:
         json.dump(eks_settings, file, indent=2)
     
-    # Commit all files to the new repository
+    # Commit all files to the new repository's main branch explicitly
     commit_message = "Add the EKS configuration file by the Lambda function"
-    github.commit_repository_contents(new_repo_name, work_dir, commit_message)
+    github.commit_repository_contents(new_repo_name, work_dir, commit_message, branch="main")
     
     logger.info(f"Successfully updated {new_repo_name} repository")
 
