@@ -233,13 +233,18 @@ class GitHubClient:
                     
                     # Ensure the target directory exists
                     file_path = os.path.join(target_dir, item["path"])
-                    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+                    dir_path = os.path.dirname(file_path)
+                    os.makedirs(dir_path, exist_ok=True)
                     
                     # GitHub API returns base64 encoded content
                     if blob_data.get("encoding") == "base64":
                         content = base64.b64decode(blob_data.get("content", ""))
+                    else:
+                        # Handle non-base64 content if needed
+                        logger.warning(f"Unexpected encoding for blob {item['sha']}: {blob_data.get('encoding')}")
                         
                     if content is not None:
+                        logger.info(f"Writing file to {file_path}")
                         with open(file_path, "wb") as f:
                             f.write(content)
     
