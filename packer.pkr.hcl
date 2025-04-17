@@ -34,7 +34,7 @@ build {
 
   provisioner "file" {
     source      = "./eks_automation"
-    destination = "/var/task/"
+    destination = "/var/task"
   }
 
   provisioner "shell" {
