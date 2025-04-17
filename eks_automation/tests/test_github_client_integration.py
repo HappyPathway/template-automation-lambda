@@ -5,6 +5,7 @@ import requests
 import tempfile
 import shutil
 import uuid
+import time
 from datetime import datetime
 
 from ..app import GitHubClient
@@ -112,6 +113,9 @@ class TestGitHubClientIntegration:
             work_dir,
             "Test commit from integration tests"
         )
+        
+        # Add a short delay to allow GitHub API to become consistent
+        time.sleep(2)
         
         # Verify the file exists in the repository
         # Clone to a new directory and verify contents
