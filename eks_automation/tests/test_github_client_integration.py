@@ -5,6 +5,7 @@ import requests
 import tempfile
 import shutil
 import uuid
+import time
 from datetime import datetime
 
 from ..app import GitHubClient
@@ -113,6 +114,9 @@ class TestGitHubClientIntegration:
             "Test commit from integration tests"
         )
         
+        # Add a short delay to allow GitHub API to become consistent
+        time.sleep(2)
+        
         # Verify the file exists in the repository
         # Clone to a new directory and verify contents
         clone_dir = os.path.join(str(tmp_path), "clone")
@@ -147,7 +151,8 @@ class TestGitHubClientIntegration:
         integration_client.commit_repository_contents(
             repo_name,
             work_dir,
-            "Initial commit"
+            "Initial commit",
+            branch="main"
         )
         
         # Create a new branch
@@ -166,7 +171,8 @@ class TestGitHubClientIntegration:
         integration_client.commit_repository_contents(
             repo_name,
             work_dir,
-            "Update in test branch"
+            "Update in test branch",
+            branch="test-branch"
         )
         
         # Verify the changes
@@ -175,8 +181,16 @@ class TestGitHubClientIntegration:
         
         # Clone and verify main branch
         main_dir = os.path.join(clone_dir, "main")
-        integration_client.clone_repository_contents(repo_name, main_dir)
+        integration_client.clone_repository_contents(repo_name, main_dir, branch="main")
         
         with open(os.path.join(main_dir, "test.txt"), "r") as f:
             main_content = f.read()
         assert main_content == "main branch content"
+        
+        # Clone and verify test branch contents
+        test_dir = os.path.join(clone_dir, "test")
+        integration_client.clone_repository_contents(repo_name, test_dir, branch="test-branch")
+        
+        with open(os.path.join(test_dir, "test.txt"), "r") as f:
+            test_content = f.read()
+        assert test_content == "test branch content"
