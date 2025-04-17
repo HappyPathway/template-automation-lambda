@@ -1,6 +1,6 @@
 terraform {
   backend "gcs" {
-    bucket = "hpwe-terraform-state"
+    bucket = "hpw-terraform-state"
     prefix = "eks-automation-lambda"
   }
 }
