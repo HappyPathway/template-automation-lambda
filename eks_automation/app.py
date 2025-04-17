@@ -66,32 +66,25 @@ class GitHubClient:
         }
         
     def get_repository(self, repo_name, create=False):
-        """Get or create a repository in the GitHub organization
-    
+        """Get or create a repository
+        
         Args:
             repo_name (str): Name of the repository
-            create (bool): Whether to create the repo if it doesn't exist
-    
+            create (bool, optional): Create the repository if it doesn't exist
+            
         Returns:
-            dict: Repository information
+            dict: Repository information from GitHub API
         """
-        repo_api_url = f"{self.api_base_url}/repos/{self.org_name}/{repo_name}"
-        
-        # Try to get the repository
-        logger.info(f"Checking if repository {repo_name} exists")
-        response = requests.get(repo_api_url, headers=self.headers, verify=False)
-        
-        if response.status_code == 200:
-            # Repository exists
-            return response.json()
-        elif response.status_code == 404:
-            if create:
-                # Repository doesn't exist, create it
+        get_url = f"{self.api_base_url}/repos/{self.org_name}/{repo_name}"
+        try:
+            response = requests.get(get_url, headers=self.headers, verify=False)
+            if response.status_code == 200:
+                return response.json()
+            elif response.status_code == 404 and create:
                 logger.info(f"Creating repository {repo_name}")
                 create_url = f"{self.api_base_url}/orgs/{self.org_name}/repos"
                 repo_data = {
                     "name": repo_name,
-                    "description": "EKS Automation CI/CD Pipeline Repo",
                     "private": True,
                     "auto_init": True,  # Initialize with README
                     "default_branch": "main",
@@ -109,9 +102,21 @@ class GitHubClient:
                 )
                 
                 if create_response.status_code in (201, 200):
-                    # Wait briefly for repository initialization
-                    time.sleep(2)
-                    return create_response.json()
+                    # Wait for repository initialization
+                    repo = create_response.json()
+                    max_retries = 10
+                    retry_delay = 1
+                    for _ in range(max_retries):
+                        try:
+                            # Try to get the main branch's reference
+                            self.get_reference_sha(repo_name, "heads/main")
+                            return repo
+                        except Exception:
+                            # If reference doesn't exist yet, wait and retry
+                            time.sleep(retry_delay)
+                            continue
+                    # If we got here, initialization failed
+                    raise Exception(f"Repository {repo_name} initialization timed out")
                 else:
                     error_message = f"Failed to create repository: {create_response.status_code} - {create_response.text}"
                     logger.error(error_message)
@@ -120,8 +125,8 @@ class GitHubClient:
                 error_message = f"Repository {repo_name} not found and create=False"
                 logger.error(error_message)
                 raise Exception(error_message)
-        else:
-            error_message = f"Unexpected response when getting repository: {response.status_code} - {response.text}"
+        except requests.exceptions.RequestException as e:
+            error_message = f"Error accessing GitHub API: {str(e)}"
             logger.error(error_message)
             raise Exception(error_message)
     
