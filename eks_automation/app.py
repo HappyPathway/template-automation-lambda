@@ -1,8 +1,8 @@
 ####################################################################################
 # This Lambda function takes JSON input, processes it using a Jinja2 template,
 # and writes the output to a file in a cloned GitHub repository.
-# The changes are then committed and pushed to the Census GitHub Enterprise Server,
-# creating a new repository for the Census EKS CI/CD pipeline.
+# The changes are then committed and pushed to the GitHub API,
+# creating a new repository for the EKS CI/CD pipeline.
 # This implementation uses only pure Python with requests library (no Git CLI dependency).
 ####################################################################################
 
@@ -24,9 +24,12 @@ import os
 
 
 # Get configuration from environment variables with defaults
-CENSUS_GITHUB_API = os.environ.get("CENSUS_GITHUB_API", "https://github.e.it.census.gov/api/v3")
-ORG_NAME = os.environ.get("GITHUB_ORG_NAME", "SCT-Engineering")
+GITHUB_API = os.environ.get("GITHUB_API")  # No default - must be configured
+ORG_NAME = os.environ.get("GITHUB_ORG_NAME")  # No default - must be configured 
 SECRET_NAME = os.environ.get("GITHUB_TOKEN_SECRET_NAME", "/eks-cluster-deployment/github_token")
+COMMIT_AUTHOR_EMAIL = os.environ.get("GITHUB_COMMIT_AUTHOR_EMAIL", "eks-automation@noreply.github.com")
+COMMIT_AUTHOR_NAME = os.environ.get("GITHUB_COMMIT_AUTHOR_NAME", "EKS Automation Lambda")
+SOURCE_VERSION = os.environ.get("TEMPLATE_SOURCE_VERSION")  # Optional - if not set, uses default branch
 
 ORIG_REPO_NAME = os.environ.get("TEMPLATE_REPO_NAME", "template-eks-cluster")
 
@@ -96,8 +99,7 @@ class GitHubClient:
             repo_data = {
                 "name": repo_name,
                 "description": "EKS Automation CI/CD Pipeline Repo",
-                "private": True,
-                "visibility": "internal"
+                "private": True
             }
             create_response = requests.post(
                 create_url, 
@@ -313,8 +315,8 @@ class GitHubClient:
         # Add committer/author information
         current_time = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         data["author"] = {
-            "name": "EKS Automation Lambda",
-            "email": "eks-automation@census.gov",
+            "name": COMMIT_AUTHOR_NAME,
+            "email": COMMIT_AUTHOR_EMAIL,
             "date": current_time
         }
         data["committer"] = data["author"]
@@ -354,8 +356,7 @@ class GitHubClient:
         """Create a reference in the repository
     
         Args:
-            repo_name (str): Name of the repository
-            ref (str): Full reference name (e.g., 'refs/heads/main')
+            repo_name (str): Full reference name (e.g., 'refs/heads/main')
             sha (str): SHA to create the reference at
         """
         api_url = f"{self.api_base_url}/repos/{self.org_name}/{repo_name}/git/refs"
@@ -382,17 +383,33 @@ class GitHubClient:
         Returns:
             str: The default branch name of the repository
         """
-        # Get default branch of original repo
+        # Get default branch of original repo for fallback
         default_branch = self.get_default_branch(source_repo)
         logger.info(f"Default branch for {source_repo}: {default_branch}")
         
         # Get tree from original repository
         logger.info(f"Getting file tree from {source_repo}")
-        tree_sha = self.get_reference_sha(source_repo, f"heads/{default_branch}")
+        ref = None
+        
+        if SOURCE_VERSION:
+            try:
+                # Try to get the tag/release reference first
+                ref = f"tags/{SOURCE_VERSION}"
+                tree_sha = self.get_reference_sha(source_repo, ref)
+                logger.info(f"Using source version: {SOURCE_VERSION}")
+            except Exception as e:
+                logger.warning(f"Failed to get version {SOURCE_VERSION}, falling back to default branch: {str(e)}")
+                ref = f"heads/{default_branch}"
+                tree_sha = self.get_reference_sha(source_repo, ref)
+        else:
+            # Use default branch
+            ref = f"heads/{default_branch}"
+            tree_sha = self.get_reference_sha(source_repo, ref)
+        
         tree = self.get_tree(source_repo, tree_sha, recursive=True)
         
         # Download all files from original repo to work directory
-        logger.info(f"Downloading all files from {source_repo}")
+        logger.info(f"Downloading all files from {source_repo} using ref: {ref}")
         self.download_repository_files(source_repo, tree, target_dir)
         
         return default_branch
@@ -558,7 +575,7 @@ def operate_github(new_repo_name, eks_settings, output_hcl):
     os.makedirs(work_dir, exist_ok=True)
     
     # Initialize GitHub client
-    github = GitHubClient(CENSUS_GITHUB_API, token, ORG_NAME)
+    github = GitHubClient(GITHUB_API, token, ORG_NAME)
     
     # Get info about original repo
     logger.info(f"Fetching original repository information: {ORIG_REPO_NAME}")
