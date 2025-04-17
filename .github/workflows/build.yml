@@ -1,0 +1,99 @@
+name: Build and Push Lambda Container
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      PACKER_GITHUB_API_TOKEN: ${{ secrets.GH_TOKEN }}
+      AWS_ACCESS_KEY_ID: ${{ vars.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+      
+    steps:
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 16
+          
+      - uses: actions/checkout@v4
+
+      - name: Setup HashiCorp Packer
+        uses: hashicorp/setup-packer@v3.1.0
+        
+      - name: Download GTag
+        run: |
+          curl -sSL https://raw.githubusercontent.com/HappyPathway/centralized-actions/main/gtag.py -o gtag.py
+          curl -sSL https://raw.githubusercontent.com/HappyPathway/centralized-actions/main/gtag_requirements.txt -o requirements.txt
+            
+      - name: Setup Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3.1.2
+        with:
+          terraform_version: 1.9.1
+          terraform_wrapper: false
+      
+      - name: terraform init
+        run: terraform init
+  
+      - name: terraform apply
+        run: terraform apply -auto-approve
+
+      - name: terraform output
+        id: terraform_output
+        run: echo "repository_uri=$(terraform output -raw repository_uri)" >> $GITHUB_ENV
+      
+      - name: git fetch --unshallow --tags
+        run: git fetch --unshallow --tags
+
+      - name: get tags
+        run: git tag --list
+
+      - name: GTag
+        run: |
+          echo "next_tag=$(python gtag.py --${{ vars.increment_version }})" >> $GITHUB_ENV 
+
+      - name: Docker Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          mask-password: true
+         
+      - name: packer init
+        run: packer init packer.pkr.hcl
+
+      - name: packer validate
+        run: |
+          packer validate \
+          -var "repository_uri=${{ env.repository_uri }}" \
+          -var "tag=${{ env.next_tag }}" \
+          packer.pkr.hcl
+          
+      - name: set tag
+        run: |
+          remote_repo="https://${{ vars.gh_username }}:${{ secrets.GH_TOKEN }}@${{ vars.gh_server }}/${{ github.repository }}.git"
+          git remote add repo ${remote_repo}
+          git config --global user.email "${{ vars.gh_email }}"
+          git config --global user.name "${{ vars.gh_username }}"
+          git tag -a ${{ env.next_tag }} -m "Release ${{ env.next_tag }}"
+          git push --tags -u repo
+     
+      - name: packer build
+        run: |
+          packer build \
+          -var "repository_uri=${{ env.repository_uri }}" \
+          -var "tag=${{ env.next_tag }}" \
+          packer.pkr.hcl
