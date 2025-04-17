@@ -1,0 +1,26 @@
+{
+  "project_name": "eks-automation-lambda-test1",
+  "eks_settings": {
+    "attrs": {
+      "account_name": "dev-account",
+      "aws_region": "us-east-1",
+      "cluster_mailing_list": "someone@example.com",
+      "cluster_name": "example-cluster-dev",
+      "eks_instance_disk_size": 100,
+      "eks_ng_desired_size": 2,
+      "eks_ng_max_size": 10,
+      "eks_ng_min_size": 2,
+      "environment": "development",
+      "environment_abbr": "dev",
+      "organization": "example:dept:team",
+      "finops_project_name": "example_project",
+      "finops_project_number": "fp00000001",
+      "finops_project_role": "example_project_app",
+      "vpc_domain_name": "dev.example.com",
+      "vpc_name": "vpc-dev"
+    },
+    "tags": {
+      "slim:schedule": "8:00-17:00"
+    }
+  }
+}

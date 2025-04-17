@@ -1,0 +1,20 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../github-repos"
+		},
+		{
+			"path": "../github-runner-image"
+		},
+		{
+			"path": "../template-lambda-deployment"
+		},
+		{
+			"path": "../terraform-github-repo"
+		}
+	],
+	"settings": {}
+}

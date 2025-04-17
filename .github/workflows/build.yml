@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: [ "main" ]
-
+  
 permissions:
   contents: write
   id-token: write
@@ -13,6 +13,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
+      GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
       AWS_ACCESS_KEY_ID: ${{ vars.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_DEFAULT_REGION: us-east-1

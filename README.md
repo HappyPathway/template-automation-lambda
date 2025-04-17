@@ -2,153 +2,135 @@
 
 ## Description
 
-This repository contains source code and supporting files for a serverless application that you can deploy with the SAM CLI.
+This repository contains source code and supporting files for a serverless Lambda container application.
 The application uses an AWS Lambda function to process JSON input and write it to a cloned repository.
-The changes are then committed and pushed to the Census GitHub Enterprise Server, creating a new repository
-for the Census EKS CI/CD pipeline.
+The changes are then committed and pushed to your GitHub Enterprise Server, creating a new repository
+for the EKS CI/CD pipeline.
 
-## Getting Started
+## Architecture
 
-First of all, you need access to an AWS account with adequate permission to which the resources will be deployed.
-You also need to create an [`AWS CLI` profile](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-quickstart.html#getting-started-quickstart-new).
+- AWS Lambda container image built with Packer and stored in ECR
+- Infrastructure managed with Terraform
+- Automated CI/CD using GitHub Actions
+- Secret management using AWS Systems Manager Parameter Store
 
-A [GitHub Personal Access Token (PAT)](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens)
-is required to access the Census GitHub Enterprise Server.
-The `PAT` must be securely stored in `AWS Systems Manager Parameter Store`. The parameter name must match the value of the
-"SECRET_NAME" constant defined in the `eks_automation/app.py` file.
+## Prerequisites
 
-To access the Census GitHub Enterprise Server, a VPC with private subnets and a route to the server must be attached.
-The VPC configuration is set in the `template.yaml` file. Update the `Subnet IDs` and `Security Group IDs` as needed.
+- AWS credentials with appropriate permissions
+- GitHub Personal Access Token (PAT) stored in AWS Systems Manager Parameter Store
+- Docker (for local development)
+- Terraform
+- Packer
+- Python 3.11+
 
-You may also want to adjust other settings (API Usage Plan, tags, etc.) in the `template.yaml` file.
+## Local Development
 
-## Prerequites
+1. Clone this repository:
+   ```sh
+   git clone <your-github-enterprise-url>/eks-automation-lambda.git
+   cd eks-automation-lambda
+   ```
 
-- git
-- python3.11
-- pip
-- pre-commit
-- AWS CLI
-- SAM CLI
+2. Install Python dependencies:
+   ```sh
+   cd eks_automation
+   pip install -r requirements.txt
+   ```
 
-You may need to submit a support ticket to request the installation of these tools on your laptop.
+3. Configure AWS credentials either through environment variables or AWS CLI profile
 
-### Installing
+4. Store your GitHub PAT in AWS Systems Manager Parameter Store. The parameter name should match the
+   value of `GITHUB_TOKEN_SECRET_NAME` in `eks_automation/app.py`
 
-- Clone this repository:
+## Deployment
 
-  ```sh
-  git clone git@github.e.it.census.gov:SCT-Engineering/eks-automation-lambda.git
-  ```
+The project uses GitHub Actions for automated deployments. On push to main:
 
-- After cloning, access the folder and install `pre-commit hooks` listed in the `.pre-commit-config.yaml`:
+1. Creates/updates ECR repository using Terraform
+2. Builds Lambda container image using Packer
+3. Pushes image to ECR
+4. Tags the release
 
-  ```sh
-  cd eks-automation-lambda
-  pre-commit install
-  ```
+For manual deployment:
 
-## Deploy/Test the application
+1. Initialize Terraform:
+   ```sh
+   terraform init
+   ```
 
-- Create an `AWS S3 bucket`:
+2. Apply Terraform configuration:
+   ```sh
+   terraform apply
+   ```
 
-  ```sh
-  aws s3api create-bucket --bucket eks-automation-lambda-s3-bucket \
-  --create-bucket-configuration LocationConstraint=us-gov-east-1 \
-  --region us-gov-east-1 \
-  --profile 229685449397-csvd-dev-gov
-  ```
+3. Build and push container image:
+   ```sh
+   packer init packer.pkr.hcl
+   packer build -var "repository_uri=$(terraform output -raw repository_uri)" -var "tag=latest" packer.pkr.hcl
+   ```
 
-  The `bucket name` must match the one specified in the `samconfig.toml` file.
-  Please adjust the profile name and region accordingly.
+## Testing
 
-- Download [`git-lambda-layer`](https://github.com/lambci/git-lambda-layer/blob/master/lambda2/layer.zip) `zip` file.
-- Upload `git-lambda-layer` to the newly created `AWS S3 bucket`:
+The Lambda function accepts JSON input in the following format:
 
-  ```sh
-  aws s3 cp {download-folder}/layer.zip s3://eks-automation-lambda-s3-bucket/ --profile 229685449397-csvd-dev-gov
-  ```
-
-- Build the application:
-
-  ```sh
-  sam build
-  ```
-
-- Deploy the application:
-
-  ```sh
-  sam deploy --profile 229685449397-csvd-dev-gov
-  ```
-
-  Save the `API Gateway endpoint URL` listed in the output. You will need this URL for testing.
-
-- Test:
-
-  The `JSON` input payload is in the following format:
-
-  ```json
-  {
-    "project_name": "string",
-    "eks_settings": {
-      "attrs": {
-        "attribute1": "value1",
-        "attribute2": "value2",
-        ...
-      },
-      "tags" : {
-        "key1": "value1",
-        "key2": "value2",
-        ...
-      }
+```json
+{
+  "project_name": "string",
+  "eks_settings": {
+    "attrs": {
+      "account_name": "my-account",
+      "aws_region": "us-east-1",
+      "cluster_mailing_list": "someone@example.com",
+      "cluster_name": "my-eks-cluster",
+      "eks_instance_disk_size": 100,
+      "eks_ng_desired_size": 2,
+      "eks_ng_max_size": 10,
+      "eks_ng_min_size": 2,
+      "environment": "development",
+      "environment_abbr": "dev",
+      "organization": "my-org:my-division:my-team",
+      "finops_project_name": "my_project_baseline",
+      "finops_project_number": "fp00000001",
+      "finops_project_role": "my_project_baseline_app",
+      "vpc_domain_name": "dev.example.com",
+      "vpc_name": "vpc-dev"
+    },
+    "tags": {
+      "slim:schedule": "8:00-17:00"
     }
   }
-  ```
+}
+```
 
-  Get the `API Key`:
+### Unit Tests
+To run the unit tests:
+```sh
+cd eks_automation
+python -m pytest tests/ -v -m "not integration"
+```
 
-  ```sh
-  aws apigateway get-api-keys --query 'items[?contains(name, `eks-`)].value' --include-values --output text --profile 229685449397-csvd-dev-gov
-  ```
+### Integration Tests
+The integration tests require real GitHub API access. To run them:
 
-  ```sh
-  curl -X POST -H "X-API-Key: {API Key}"  https://{API Gateway endpoint URL} -d '
-  {
-    "project_name": "eks-automation-lambda-test",
-    "eks_settings": {
-      "attrs": {
-        "account_name": "lab-dev-ew",
-        "aws_region": "us-gov-east-1",
-        "cluster_mailing_list": "someone@census.gov",
-        "cluster_name": "csvd-platform-lab-mcm",
-        "eks_instance_disk_size": 100,
-        "eks_ng_desired_size": 2,
-        "eks_ng_max_size": 10,
-        "eks_ng_min_size": 2,
-        "environment": "development",
-        "environment_abbr": "dev",
-        "organization": "census:ocio:csvd",
-        "finops_project_name": "csvd_platformbaseline",
-        "finops_project_number": "fs0000000078",
-        "finops_project_role": "csvd_platformbaseline_app",
-        "vpc_domain_name": "dev.lab.csp2.census.gov",
-        "vpc_name": "vpc3-lab-dev"
-      },
-      "tags" : {
-        "slim:schedule": "8:00-17:00"
-      }
-    }
-  }
-  '
-  ```
+1. Set up the required environment variables:
+```sh
+export GITHUB_TOKEN="your-github-token"
+export GITHUB_API="https://api.github.com"  # or your GitHub Enterprise URL
+export GITHUB_ORG="your-org-name"
+```
 
-  Replace `{API Key}` with the API key we just retrieved, and `{API Gateway endpoint URL}` with the value saved from the `sam deploy` command output.
+2. Run the integration tests:
+```sh
+cd eks_automation
+python -m pytest tests/ -v -m integration
+```
+
+Note: Integration tests will create temporary repositories in your GitHub organization. These repositories will be archived (not deleted) after the tests complete.
 
 ## Resources
 
-- [AWS Serverless Application Model](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/what-is-sam.html)
-- [AWS Lambda](https://docs.aws.amazon.com/lambda/latest/dg/welcome.html)
-- [Git Lambda Layer](https://github.com/lambci/git-lambda-layer/)
-- [AWS API Gateway](https://docs.aws.amazon.com/apigateway/latest/developerguide/welcome.html)
-- [PyGithub](https://pygithub.readthedocs.io/en/stable/introduction.html)
-- [GitPython](https://gitpython.readthedocs.io/en/stable/)
+- [AWS Lambda Container Images](https://docs.aws.amazon.com/lambda/latest/dg/images-create.html)
+- [HashiCorp Packer](https://www.packer.io/docs)
+- [AWS ECR Public](https://docs.aws.amazon.com/AmazonECR/latest/public/what-is-ecr.html)
+- [GitHub Actions](https://docs.github.com/en/actions)
+- [Terraform AWS Provider](https://registry.terraform.io/providers/hashicorp/aws/latest/docs)

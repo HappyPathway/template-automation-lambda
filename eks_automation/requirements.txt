@@ -2,8 +2,11 @@
 # black
 # pre-commit
 
-jinja2
 boto3
 requests
-pygithub
-gitpython
+
+# Testing dependencies
+pytest>=7.0.0
+pytest-mock>=3.10.0
+requests-mock>=1.11.0
+coverage>=7.2.0

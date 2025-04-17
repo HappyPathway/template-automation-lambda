@@ -21,7 +21,7 @@ source "docker" "lambda" {
   commit = true
   changes = [
     "WORKDIR /var/task",
-    "CMD [ \"app.handler\" ]"
+    "CMD [ \"app.lambda_handler\" ]"
   ]
 }
 
@@ -33,14 +33,14 @@ build {
   ]
 
   provisioner "file" {
-    source      = "./eks_automation"
+    source      = "./eks_automation/"
     destination = "/var/task"
   }
 
   provisioner "shell" {
     inline = [
-      "cd /var/task",
-      "pip3 install -r requirements.txt -t ."
+      "ls -la /var/task",  # Debug: List contents
+      "pip3 install -r /var/task/requirements.txt -t /var/task"
     ]
   }
 

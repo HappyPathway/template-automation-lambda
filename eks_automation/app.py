@@ -1,8 +1,7 @@
 ####################################################################################
-# This Lambda function takes JSON input, processes it using a Jinja2 template,
-# and writes the output to a file in a cloned GitHub repository.
-# The changes are then committed and pushed to the GitHub API,
-# creating a new repository for the EKS CI/CD pipeline.
+# This Lambda function takes JSON input and writes it directly to a config.json file
+# in a cloned GitHub repository. The changes are then committed and pushed to the 
+# GitHub API, creating a new repository for the EKS CI/CD pipeline.
 # This implementation uses only pure Python with requests library (no Git CLI dependency).
 ####################################################################################
 
@@ -14,32 +13,15 @@ import base64
 import time
 import requests
 import json
-from jinja2 import Environment, FileSystemLoader
 from urllib.parse import urlparse
 from datetime import datetime
 
 import boto3
 from botocore.exceptions import ClientError
-import os
-
-
-# Get configuration from environment variables with defaults
-GITHUB_API = os.environ.get("GITHUB_API")  # No default - must be configured
-ORG_NAME = os.environ.get("GITHUB_ORG_NAME")  # No default - must be configured 
-SECRET_NAME = os.environ.get("GITHUB_TOKEN_SECRET_NAME", "/eks-cluster-deployment/github_token")
-COMMIT_AUTHOR_EMAIL = os.environ.get("GITHUB_COMMIT_AUTHOR_EMAIL", "eks-automation@noreply.github.com")
-COMMIT_AUTHOR_NAME = os.environ.get("GITHUB_COMMIT_AUTHOR_NAME", "EKS Automation Lambda")
-SOURCE_VERSION = os.environ.get("TEMPLATE_SOURCE_VERSION")  # Optional - if not set, uses default branch
-
-ORIG_REPO_NAME = os.environ.get("TEMPLATE_REPO_NAME", "template-eks-cluster")
-
-TEMPLATE_FILE_NAME = os.environ.get("TEMPLATE_FILE_NAME", "eks.hcl.j2")
-HCL_FILE_NAME = os.environ.get("HCL_FILE_NAME", "eks.hcl")
 
 # Initialize the logger
 logger = logging.getLogger()
 logger.setLevel("INFO")  # Set to "ERROR" to reduce logging messages.
-
 
 class GitHubClient:
     """A class to interact with GitHub API without relying on external Git binaries.
@@ -48,17 +30,27 @@ class GitHubClient:
     branches, files, commits and other Git operations using only the requests library.
     """
     
-    def __init__(self, api_base_url, token, org_name):
+    def __init__(self, api_base_url, token, org_name, commit_author_name, commit_author_email, source_version=None, template_repo_name=None, config_file_name="config.json"):
         """Initialize the GitHub client
         
         Args:
             api_base_url (str): Base URL for the GitHub API
             token (str): GitHub access token
             org_name (str): GitHub organization name
+            commit_author_name (str): Name of the commit author
+            commit_author_email (str): Email of the commit author
+            source_version (str, optional): Version to use from template repo
+            template_repo_name (str, optional): Name of the template repository
+            config_file_name (str, optional): Name of the config file to write
         """
         self.api_base_url = api_base_url
         self.token = token
         self.org_name = org_name
+        self.commit_author_name = commit_author_name
+        self.commit_author_email = commit_author_email
+        self.source_version = source_version
+        self.template_repo_name = template_repo_name
+        self.config_file_name = config_file_name
         self.headers = self._create_headers()
         
     def _create_headers(self):
@@ -92,30 +84,44 @@ class GitHubClient:
         if response.status_code == 200:
             # Repository exists
             return response.json()
-        elif response.status_code == 404 and create:
-            # Repository doesn't exist, create it
-            logger.info(f"Creating repository {repo_name}")
-            create_url = f"{self.api_base_url}/orgs/{self.org_name}/repos"
-            repo_data = {
-                "name": repo_name,
-                "description": "EKS Automation CI/CD Pipeline Repo",
-                "private": True
-            }
-            create_response = requests.post(
-                create_url, 
-                headers=self.headers, 
-                json=repo_data,
-                verify=False
-            )
-            
-            if create_response.status_code in (201, 200):
-                return create_response.json()
+        elif response.status_code == 404:
+            if create:
+                # Repository doesn't exist, create it
+                logger.info(f"Creating repository {repo_name}")
+                create_url = f"{self.api_base_url}/orgs/{self.org_name}/repos"
+                repo_data = {
+                    "name": repo_name,
+                    "description": "EKS Automation CI/CD Pipeline Repo",
+                    "private": True,
+                    "auto_init": True,  # Initialize with README
+                    "default_branch": "main",
+                    "allow_squash_merge": True,
+                    "allow_merge_commit": True,
+                    "allow_rebase_merge": True,
+                    "delete_branch_on_merge": True,
+                    "enable_branch_protection": False  # Disable branch protection
+                }
+                create_response = requests.post(
+                    create_url, 
+                    headers=self.headers, 
+                    json=repo_data,
+                    verify=False
+                )
+                
+                if create_response.status_code in (201, 200):
+                    # Wait briefly for repository initialization
+                    time.sleep(2)
+                    return create_response.json()
+                else:
+                    error_message = f"Failed to create repository: {create_response.status_code} - {create_response.text}"
+                    logger.error(error_message)
+                    raise Exception(error_message)
             else:
-                error_message = f"Failed to create repository: {create_response.status_code} - {create_response.text}"
+                error_message = f"Repository {repo_name} not found and create=False"
                 logger.error(error_message)
                 raise Exception(error_message)
         else:
-            error_message = f"Repository {repo_name} not found and create=False"
+            error_message = f"Unexpected response when getting repository: {response.status_code} - {response.text}"
             logger.error(error_message)
             raise Exception(error_message)
     
@@ -212,6 +218,9 @@ class GitHubClient:
             tree (dict): Tree information from get_tree()
             target_dir (str): Directory to download files to
         """
+        # Ensure target directory exists even if there are no files
+        os.makedirs(target_dir, exist_ok=True)
+        
         for item in tree.get("tree", []):
             if item["type"] == "blob":
                 # Get the blob contents
@@ -224,13 +233,18 @@ class GitHubClient:
                     
                     # Ensure the target directory exists
                     file_path = os.path.join(target_dir, item["path"])
-                    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+                    dir_path = os.path.dirname(file_path)
+                    os.makedirs(dir_path, exist_ok=True)
                     
                     # GitHub API returns base64 encoded content
                     if blob_data.get("encoding") == "base64":
                         content = base64.b64decode(blob_data.get("content", ""))
+                    else:
+                        # Handle non-base64 content if needed
+                        logger.warning(f"Unexpected encoding for blob {item['sha']}: {blob_data.get('encoding')}")
                         
                     if content is not None:
+                        logger.info(f"Writing file to {file_path}")
                         with open(file_path, "wb") as f:
                             f.write(content)
     
@@ -306,20 +320,21 @@ class GitHubClient:
         """
         api_url = f"{self.api_base_url}/repos/{self.org_name}/{repo_name}/git/commits"
         
+        # Add committer/author information
+        current_time = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        author_info = {
+            "name": self.commit_author_name,
+            "email": self.commit_author_email,
+            "date": current_time
+        }
+        
         data = {
             "message": message,
             "tree": tree_sha,
-            "parents": parent_shas
+            "parents": parent_shas,
+            "author": author_info,
+            "committer": author_info
         }
-        
-        # Add committer/author information
-        current_time = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-        data["author"] = {
-            "name": COMMIT_AUTHOR_NAME,
-            "email": COMMIT_AUTHOR_EMAIL,
-            "date": current_time
-        }
-        data["committer"] = data["author"]
         
         response = requests.post(api_url, headers=self.headers, json=data, verify=False)
         
@@ -373,64 +388,65 @@ class GitHubClient:
             logger.error(error_message)
             raise Exception(error_message)
             
-    def clone_repository_contents(self, source_repo, target_dir):
+    def clone_repository_contents(self, source_repo, target_dir, branch=None):
         """Clone a repository's contents to a local directory using GitHub API
         
         Args:
             source_repo (str): Name of the source repository
             target_dir (str): Target directory to download files to
+            branch (str, optional): Branch to clone from. If None, uses default branch.
             
         Returns:
-            str: The default branch name of the repository
+            str: The branch name that was cloned
         """
-        # Get default branch of original repo for fallback
-        default_branch = self.get_default_branch(source_repo)
-        logger.info(f"Default branch for {source_repo}: {default_branch}")
+        # Create the target directory if it doesn't exist
+        os.makedirs(target_dir, exist_ok=True)
         
-        # Get tree from original repository
-        logger.info(f"Getting file tree from {source_repo}")
-        ref = None
-        
-        if SOURCE_VERSION:
-            try:
-                # Try to get the tag/release reference first
-                ref = f"tags/{SOURCE_VERSION}"
-                tree_sha = self.get_reference_sha(source_repo, ref)
-                logger.info(f"Using source version: {SOURCE_VERSION}")
-            except Exception as e:
-                logger.warning(f"Failed to get version {SOURCE_VERSION}, falling back to default branch: {str(e)}")
-                ref = f"heads/{default_branch}"
-                tree_sha = self.get_reference_sha(source_repo, ref)
-        else:
-            # Use default branch
-            ref = f"heads/{default_branch}"
-            tree_sha = self.get_reference_sha(source_repo, ref)
-        
+        try:
+            if branch:
+                target_branch = branch
+                # Try to get the branch's reference directly
+                tree_sha = self.get_reference_sha(source_repo, f"heads/{target_branch}")
+            else:
+                # If no branch specified, use default branch
+                target_branch = self.get_default_branch(source_repo)
+                tree_sha = self.get_reference_sha(source_repo, f"heads/{target_branch}")
+        except Exception as e:
+            logger.warning(f"Failed to get reference for {branch or 'default branch'}: {str(e)}")
+            target_branch = branch or "main"
+            # If we can't get the reference, the branch might not exist yet
+            tree = {"tree": []}
+            self.download_repository_files(source_repo, tree, target_dir)
+            return target_branch
+
+        # Get the full tree for the branch
+        logger.info(f"Getting file tree from {source_repo} for branch {target_branch}")
         tree = self.get_tree(source_repo, tree_sha, recursive=True)
-        
-        # Download all files from original repo to work directory
-        logger.info(f"Downloading all files from {source_repo} using ref: {ref}")
+
+        # Download all files
+        logger.info(f"Downloading all files from {source_repo} using ref: heads/{target_branch}")
         self.download_repository_files(source_repo, tree, target_dir)
-        
-        return default_branch
+
+        return target_branch
     
-    def commit_repository_contents(self, repo_name, work_dir, commit_message):
+    def commit_repository_contents(self, repo_name, work_dir, commit_message, branch=None):
         """Commit all files from a directory to a repository
         
         Args:
             repo_name (str): Name of the repository
             work_dir (str): Directory containing the files to commit
             commit_message (str): Commit message
+            branch (str, optional): Branch to commit to. If None, uses default branch.
             
         Returns:
-            str: The default branch name of the repository
+            str: The branch name that was committed to
         """
         # First, get the current state of the target repository
         try:
-            target_default_branch = self.get_default_branch(repo_name)
+            target_branch = branch or self.get_default_branch(repo_name)
         except Exception:
             # If we can't get the default branch, it might be a new repo
-            target_default_branch = "main"
+            target_branch = branch or "main"
         
         # Upload all files to the repository
         tree_items = []
@@ -463,7 +479,7 @@ class GitHubClient:
         # Try to get the latest commit SHA for the branch
         # If it doesn't exist, we'll create it
         try:
-            latest_commit_sha = self.get_reference_sha(repo_name, f"heads/{target_default_branch}")
+            latest_commit_sha = self.get_reference_sha(repo_name, f"heads/{target_branch}")
             latest_commit = self.get_commit(repo_name, latest_commit_sha)
             base_tree_sha = latest_commit["tree"]["sha"]
         except Exception:
@@ -495,18 +511,18 @@ class GitHubClient:
         try:
             self.update_reference(
                 repo_name, 
-                f"heads/{target_default_branch}", 
+                f"heads/{target_branch}", 
                 new_commit_sha
             )
         except Exception:
             # If the reference doesn't exist, create it
             self.create_reference(
                 repo_name, 
-                f"refs/heads/{target_default_branch}", 
+                f"refs/heads/{target_branch}", 
                 new_commit_sha
             )
         
-        return target_default_branch
+        return target_branch
 
 
 # pylint: disable=unused-argument
@@ -521,12 +537,6 @@ def lambda_handler(event, context):
     Returns:
         dict: Dict containing status message.
     """
-
-    # For test, load input data from a local file.
-    # input_data = ""
-    # with open("data.json", "r") as file:
-    #     input_data = json.load(file)
-
     input_data = json.loads(event["body"])
 
     project_name = input_data["project_name"]
@@ -538,7 +548,7 @@ def lambda_handler(event, context):
         }
 
     try:
-        rendered = operate_github(project_name, eks_settings, HCL_FILE_NAME)
+        operate_github(project_name, eks_settings)
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error(f"Error in operate_github: {str(e)}")
         return {"statusCode": 400, "body": json.dumps({"error": str(e)})}
@@ -546,12 +556,12 @@ def lambda_handler(event, context):
     return {
         "statusCode": 200,
         "headers": {"Access-Control-Allow-Origin": "*"},
-        "body": json.dumps({"result": rendered}),
+        "body": json.dumps({"result": "Success"}),
     }
 
 
-def operate_github(new_repo_name, eks_settings, output_hcl):
-    """Process template and create/update repository using GitHub API
+def operate_github(new_repo_name, eks_settings):
+    """Write EKS settings to config.json and create/update repository using GitHub API
     
     This implementation uses only the requests library and does not rely on git CLI
     or any external binaries.
@@ -559,14 +569,19 @@ def operate_github(new_repo_name, eks_settings, output_hcl):
     Args:
         new_repo_name (str): Name of the new GitHub repo.
         eks_settings (json): Input JSON data with all the EKS parameter values.
-        output_hcl (str): Name of the EKS parameter file in HCL format.
 
     Returns:
-        str: The rendered EKS parameter string.
+        None
     """
-
-    # Get GitHub access token
+    # Get GitHub access token and environment variables
     token = github_token()
+    github_api = os.environ.get("GITHUB_API")  # No default - must be configured
+    org_name = os.environ.get("GITHUB_ORG_NAME")  # No default - must be configured
+    commit_author_email = os.environ.get("GITHUB_COMMIT_AUTHOR_EMAIL", "eks-automation@example.com")
+    commit_author_name = os.environ.get("GITHUB_COMMIT_AUTHOR_NAME", "EKS Automation Lambda")
+    source_version = os.environ.get("TEMPLATE_SOURCE_VERSION")  # Optional
+    template_repo_name = os.environ.get("TEMPLATE_REPO_NAME", "template-eks-cluster")
+    config_file_name = "config.json"
     
     # Create work directory if it doesn't exist
     work_dir = f"/tmp/{new_repo_name}"
@@ -574,53 +589,40 @@ def operate_github(new_repo_name, eks_settings, output_hcl):
         shutil.rmtree(work_dir, ignore_errors=False, onerror=remove_readonly)
     os.makedirs(work_dir, exist_ok=True)
     
-    # Initialize GitHub client
-    github = GitHubClient(GITHUB_API, token, ORG_NAME)
+    # Initialize GitHub client with all required parameters
+    github = GitHubClient(
+        github_api, 
+        token, 
+        org_name,
+        commit_author_name,
+        commit_author_email,
+        source_version,
+        template_repo_name,
+        config_file_name
+    )
     
     # Get info about original repo
-    logger.info(f"Fetching original repository information: {ORIG_REPO_NAME}")
-    orig_repo = github.get_repository(ORIG_REPO_NAME)
+    logger.info(f"Fetching original repository information: {template_repo_name}")
+    orig_repo = github.get_repository(template_repo_name)
     
     # Get or create the new repository
     logger.info(f"Getting or creating repository: {new_repo_name}")
     new_repo = github.get_repository(new_repo_name, create=True)
     
     # Clone the original repository contents
-    github.clone_repository_contents(ORIG_REPO_NAME, work_dir)
+    github.clone_repository_contents(template_repo_name, work_dir)
     
-    # Render the template and write to file
-    rendered = render_j2_template(eks_settings, TEMPLATE_FILE_NAME)
-    output_file_path = os.path.join(work_dir, output_hcl)
-    
-    logger.info(f"Writing rendered template to {output_file_path}")
+    # Write EKS settings directly to config.json
+    output_file_path = os.path.join(work_dir, config_file_name)
+    logger.info(f"Writing EKS settings to {output_file_path}")
     with open(output_file_path, "w") as file:
-        file.write(rendered)
+        json.dump(eks_settings, file, indent=2)
     
-    # Commit all files to the new repository
-    commit_message = "Add the EKS parameter file by the Lambda function"
-    github.commit_repository_contents(new_repo_name, work_dir, commit_message)
+    # Commit all files to the new repository's main branch explicitly
+    commit_message = "Add the EKS configuration file by the Lambda function"
+    github.commit_repository_contents(new_repo_name, work_dir, commit_message, branch="main")
     
     logger.info(f"Successfully updated {new_repo_name} repository")
-    return rendered
-
-
-def render_j2_template(eks_settings, j2_template, j2_template_dir="templates/"):
-    """Render the j2 template with the input JSON data
-
-    Args:
-        eks_settings (json): input data in JSON format.
-        j2_template (j2): Name of the template file to generate the output.
-        j2_template_dir (str, optional): The directory where the templates are stored. Defaults to "templates/".
-
-    Returns:
-        str: Rendered template string.
-    """
-
-    # Render template
-    jinja_env = Environment(loader=FileSystemLoader(j2_template_dir), trim_blocks=True)
-    template = jinja_env.get_template(j2_template)
-
-    return template.render(data=eks_settings)
 
 
 def github_token():
