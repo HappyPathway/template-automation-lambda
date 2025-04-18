@@ -126,6 +126,7 @@ class TestGitHubClientIntegration:
         
         # Create a test file in main branch
         with tempfile.TemporaryDirectory() as work_dir:
+            # Initial commit on main branch
             main_file = os.path.join(work_dir, "test.txt")
             with open(main_file, "w") as f:
                 f.write("main branch content")
@@ -136,10 +137,15 @@ class TestGitHubClientIntegration:
                 "Initial commit on main"
             )
             
-            # Create and switch to a new branch
+            # Create and switch to a test branch
             test_branch = "test-branch"
-            shutil.rmtree(work_dir)
-            os.makedirs(work_dir)
+            # Clean directory for test branch changes
+            for file in os.listdir(work_dir):
+                file_path = os.path.join(work_dir, file)
+                if os.path.isfile(file_path):
+                    os.unlink(file_path)
+                elif os.path.isdir(file_path):
+                    shutil.rmtree(file_path)
             
             # Create different content in test branch
             with open(main_file, "w") as f:
@@ -152,14 +158,18 @@ class TestGitHubClientIntegration:
                 branch=test_branch
             )
             
-            # Verify main branch content
-            main_output = os.path.join(work_dir, "main")
+            # Clone and verify main branch content
+            main_output = os.path.join(work_dir, "clone-main")
+            os.makedirs(main_output, exist_ok=True)
             self.client.clone_repository_contents(repo_name, main_output, branch="main")
-            with open(os.path.join(main_output, "test.txt")) as f:
-                assert f.read() == "main branch content"
             
-            # Verify test branch content
-            test_output = os.path.join(work_dir, "test")
+            with open(os.path.join(main_output, "test.txt")) as f:
+                assert f.read().strip() == "main branch content"
+            
+            # Clone and verify test branch content
+            test_output = os.path.join(work_dir, "clone-test")
+            os.makedirs(test_output, exist_ok=True)
             self.client.clone_repository_contents(repo_name, test_output, branch=test_branch)
+            
             with open(os.path.join(test_output, "test.txt")) as f:
-                assert f.read() == "test branch content"
+                assert f.read().strip() == "test branch content"

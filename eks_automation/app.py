@@ -484,12 +484,12 @@ class GitHubClient:
                     "sha": blob_sha
                 })
         
-        # Try to get the latest commit SHA for the branch
-        # If it doesn't exist, we'll create it
+        # Try to get the latest commit SHA from the base branch
+        base_branch = "main"  # Always use main as base when creating new branches
         try:
-            latest_commit_sha = self.get_reference_sha(repo_name, f"heads/{target_branch}")
-            latest_commit = self.get_commit(repo_name, latest_commit_sha)
-            base_tree_sha = latest_commit["tree"]["sha"]
+            base_commit_sha = self.get_reference_sha(repo_name, f"heads/{base_branch}")
+            base_commit = self.get_commit(repo_name, base_commit_sha)
+            base_tree_sha = base_commit["tree"]["sha"]
         except Exception:
             # If we can't get the reference, assume it's a new repo with no commits
             base_tree_sha = None
@@ -504,7 +504,7 @@ class GitHubClient:
                 repo_name, 
                 commit_message, 
                 new_tree_sha, 
-                [latest_commit_sha]
+                [base_commit_sha]
             )
         else:
             # If it's a new repo, create the first commit
@@ -517,18 +517,25 @@ class GitHubClient:
         
         # Update or create the reference to point to the new commit
         try:
+            # Try to update existing branch
             self.update_reference(
                 repo_name, 
                 f"heads/{target_branch}", 
                 new_commit_sha
             )
         except Exception:
-            # If the reference doesn't exist, create it
-            self.create_reference(
-                repo_name, 
-                f"refs/heads/{target_branch}", 
-                new_commit_sha
-            )
+            # If the branch doesn't exist, create it
+            try:
+                self.create_reference(
+                    repo_name, 
+                    f"refs/heads/{target_branch}", 
+                    new_commit_sha
+                )
+            except Exception as e:
+                # If we still can't create the branch, something is wrong
+                error_message = f"Failed to create or update branch {target_branch} for {repo_name}: {str(e)}"
+                logger.error(error_message)
+                raise Exception(error_message)
         
         return target_branch
 
