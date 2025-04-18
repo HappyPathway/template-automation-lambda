@@ -110,6 +110,9 @@ class TestGitHubClientIntegration:
             )
             assert branch == "main"
             
+            # Add a small delay to ensure GitHub API has processed the commit
+            time.sleep(2)
+            
             # Verify we can clone the repository with the file
             output_dir = os.path.join(work_dir, "clone")
             cloned_branch = self.client.clone_repository_contents(repo_name, output_dir)
