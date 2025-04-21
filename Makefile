@@ -1,4 +1,4 @@
-.PHONY: install test test-unit test-integration clean
+.PHONY: install test test-unit test-integration clean clean-test-repos
 
 # Variables
 PYTHON = python3
@@ -37,3 +37,8 @@ clean:
 	find . -type d -name '__pycache__' -exec rm -rf {} +
 	rm -rf .pytest_cache
 	rm -rf .coverage
+
+# Clean up temporary test repositories on GitHub
+clean-test-repos:
+	echo "Cleaning up temporary test repositories..."
+	$(PYTHON) scripts/cleanup_test_repos.py

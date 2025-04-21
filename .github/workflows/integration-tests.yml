@@ -33,6 +33,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
           GITHUB_API: "https://api.github.com"  # Can be overridden with vars if needed
           GITHUB_ORG: ${{ github.repository_owner }}
+          SECRET_NAME: /dev/secret/ssh/dont/tell
         run: |
           cd eks_automation
           python -m pytest tests/ -v -m integration
