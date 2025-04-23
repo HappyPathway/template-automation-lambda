@@ -1,49 +1,52 @@
 provider "aws" {
-  region = "us-east-1"
+  region = var.aws_region
 }
 
 data "aws_caller_identity" "current" {}
 
-resource "aws_ecrpublic_repository" "eks-automation-lambda" {
-  repository_name = "eks-automation-lambda"
+resource "aws_ecrpublic_repository" "ecr_repo" {
+  repository_name = var.repository_name
 
   catalog_data {
-    about_text        = "EKS Automation Lambda Image"
-    architectures     = ["x86_64"]
-    description       = "Lambda container image for EKS automation"
-    operating_systems = ["AmazonLinux2"]
-    usage_text        = "Creates an EKS Automation Lambda container image"
+    about_text        = var.catalog_data.about_text
+    architectures     = var.catalog_data.architectures
+    description       = var.catalog_data.description
+    operating_systems = var.catalog_data.operating_systems
+    usage_text        = var.catalog_data.usage_text
   }
 
-  tags = {
-    env = "production"
-  }
+  tags = var.tags
 }
 
 locals {
-  repository_uri = aws_ecrpublic_repository.eks-automation-lambda.repository_uri
-  repository_id  = aws_ecrpublic_repository.eks-automation-lambda.id
+  repository_uri = aws_ecrpublic_repository.ecr_repo.repository_uri
+  repository_id  = aws_ecrpublic_repository.ecr_repo.id
   aws_account_id = data.aws_caller_identity.current.account_id
-  region         = "us-east-1"
-  arn            = aws_ecrpublic_repository.eks-automation-lambda.arn
+  region         = var.aws_region
+  arn            = aws_ecrpublic_repository.ecr_repo.arn
 }
 
 output "repository_uri" {
-  value = local.repository_uri
+  description = "The URI of the ECR repository"
+  value       = local.repository_uri
 }
 
 output "repository_id" {
-  value = local.repository_id
+  description = "The ID of the ECR repository"
+  value       = local.repository_id
 }
 
 output "aws_account_id" {
-  value = local.aws_account_id
+  description = "The ID of the AWS account"
+  value       = local.aws_account_id
 }
 
 output "region" {
-  value = local.region
+  description = "The AWS region where resources are created"
+  value       = local.region
 }
 
 output "arn" {
-  value = local.arn
+  description = "The ARN of the ECR repository"
+  value       = local.arn
 }

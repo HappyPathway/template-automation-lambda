@@ -1,11 +1,11 @@
-# EKS Automation Lambda
+# Template Automation Lambda
 
 ## Description
 
 This repository contains source code and supporting files for a serverless Lambda container application.
 The application uses an AWS Lambda function to process JSON input and write it to a cloned repository.
 The changes are then committed and pushed to your GitHub Enterprise Server, creating a new repository
-for the EKS CI/CD pipeline.
+with custom configurations from your template.
 
 ## Architecture
 
@@ -27,13 +27,13 @@ for the EKS CI/CD pipeline.
 
 1. Clone this repository:
    ```sh
-   git clone <your-github-enterprise-url>/eks-automation-lambda.git
-   cd eks-automation-lambda
+   git clone <your-github-enterprise-url>/template-automation-lambda.git
+   cd template-automation-lambda
    ```
 
 2. Install Python dependencies:
    ```sh
-   cd eks_automation
+   cd template_automation
    pip install -r requirements.txt
    ```
 
@@ -76,24 +76,17 @@ The Lambda function accepts JSON input in the following format:
 ```json
 {
   "project_name": "string",
-  "eks_settings": {
+  "template_settings": {
     "attrs": {
       "account_name": "my-account",
       "aws_region": "us-east-1",
-      "cluster_mailing_list": "someone@example.com",
-      "cluster_name": "my-eks-cluster",
-      "eks_instance_disk_size": 100,
-      "eks_ng_desired_size": 2,
-      "eks_ng_max_size": 10,
-      "eks_ng_min_size": 2,
+      "team_contact": "someone@example.com",
+      "project_name": "my-project",
       "environment": "development",
       "environment_abbr": "dev",
       "organization": "my-org:my-division:my-team",
-      "finops_project_name": "my_project_baseline",
-      "finops_project_number": "fp00000001",
-      "finops_project_role": "my_project_baseline_app",
-      "vpc_domain_name": "dev.example.com",
-      "vpc_name": "vpc-dev"
+      "project_id": "proj_001",
+      "domain_name": "dev.example.com"
     },
     "tags": {
       "slim:schedule": "8:00-17:00"

@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../terraform-aws-template-automation"
+		},
+		{
+			"path": "../providers/terraform-provider-aws/website/docs/d"
+		},
+		{
+			"path": "../providers/terraform-provider-aws/website/docs/r"
+		}
+	],
+	"settings": {}
+}

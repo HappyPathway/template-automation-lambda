@@ -1,6 +1,6 @@
 # IAM Role for CodeBuild
 resource "aws_iam_role" "codebuild" {
-  name = "eks-automation-lambda-codebuild-role"
+  name = "template-automation-lambda-codebuild-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -18,7 +18,7 @@ resource "aws_iam_role" "codebuild" {
 
 # IAM Role Policy for CodeBuild
 resource "aws_iam_role_policy" "codebuild" {
-  name = "eks-automation-lambda-codebuild-policy"
+  name = "template-automation-lambda-codebuild-policy"
   role = aws_iam_role.codebuild.id
 
   policy = jsonencode({
