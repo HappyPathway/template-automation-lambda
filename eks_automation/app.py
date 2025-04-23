@@ -28,11 +28,11 @@ logger.setLevel("INFO")  # Set to "ERROR" to reduce logging messages.
 SECRET_NAME = os.environ["SECRET_NAME"]
 
 class GitHubClient:
-    """A class to interact with GitHub API without relying on external Git binaries."""
+    """A class to interact with GitHub API without relying on external Git binaries.
     
     This class encapsulates all GitHub API operations for managing repositories,
     branches, files, commits and other Git operations using only the requests library.
-    """"""
+    """
     
     def __init__(self, api_base_url, token, org_name, commit_author_name, commit_author_email, source_version=None, template_repo_name=None, config_file_name="config.json"):
         """Initialize the GitHub client
