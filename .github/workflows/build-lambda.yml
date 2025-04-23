@@ -23,12 +23,39 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: CSVD/aws-auth@main
+        id: aws_auth
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
+          ecs: true
+
+      - name: Terraform Init and Apply
+        env:
+          AWS_ACCESS_KEY_ID: ${{ steps.aws_auth.outputs.aws_access_key_id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.aws_auth.outputs.aws_secret_access_key }}
+          AWS_SESSION_TOKEN: ${{ steps.aws_auth.outputs.aws_session_token }}
+        working-directory: ./infrastructure
+        run: |
+          terraform init
+          terraform apply -auto-approve
+
+      - name: Package Source Code
+        run: |
+          zip -r source.zip . -x ".git/*" ".github/*" "infrastructure/*"
+
+      - name: Upload to S3
+        env:
+          AWS_ACCESS_KEY_ID: ${{ steps.aws_auth.outputs.aws_access_key_id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.aws_auth.outputs.aws_secret_access_key }}
+          AWS_SESSION_TOKEN: ${{ steps.aws_auth.outputs.aws_session_token }}
+        run: |
+          BUCKET_NAME=$(cd infrastructure && terraform output -raw codebuild_source_bucket)
+          aws s3 cp source.zip s3://${BUCKET_NAME}/source.zip
 
       - name: Start CodeBuild Project
+        env:
+          AWS_ACCESS_KEY_ID: ${{ steps.aws_auth.outputs.aws_access_key_id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.aws_auth.outputs.aws_secret_access_key }}
+          AWS_SESSION_TOKEN: ${{ steps.aws_auth.outputs.aws_session_token }}
         run: |
           BUILD_ID=$(aws codebuild start-build --project-name eks-automation-lambda-builder --output text --query 'build.id')
           echo "Started build with ID: $BUILD_ID"
