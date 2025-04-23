@@ -552,7 +552,7 @@ def lambda_handler(event, context):
     Returns:
         dict: Dict containing status message.
     """
-    input_data = json.loads(event["body"])
+    input_data = event["body"]
 
     project_name = input_data["project_name"]
     eks_settings = input_data["eks_settings"]
