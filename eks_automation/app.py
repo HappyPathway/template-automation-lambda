@@ -13,12 +13,16 @@ import base64
 import time
 import requests
 import json
+import urllib3
 from urllib.parse import urlparse
 from datetime import datetime
 import traceback
 
 import boto3
 from botocore.exceptions import ClientError
+
+# Disable SSL verification warnings
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Initialize the logger
 logger = logging.getLogger()
