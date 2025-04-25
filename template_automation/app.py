@@ -3,6 +3,7 @@
 # It takes JSON input and writes it to a configurable config file in the new repo.
 # Key features:
 # - Template agnostic: Can be used with any type of template repository
+# - Team-based admin access: Set owning team with full admin access
 # - Configurable settings via Parameter Store (with prefix) or environment variables:
 #   - PARAM_STORE_PREFIX: Prefix for SSM parameters (default: /template-automation)
 #   - TEMPLATE_CONFIG_FILE: Name of config file to write (default: config.json)
@@ -95,12 +96,13 @@ class GitHubClient:
             "Content-Type": "application/json"
         }
         
-    def get_repository(self, repo_name, create=False):
+    def get_repository(self, repo_name, create=False, owning_team=None):
         """Get or create a repository
         
         Args:
             repo_name (str): Name of the repository
             create (bool, optional): Create the repository if it doesn't exist
+            owning_team (str, optional): Name of the GitHub team to give admin access
             
         Returns:
             dict: Repository information from GitHub API
@@ -109,6 +111,9 @@ class GitHubClient:
         try:
             response = requests.get(get_url, headers=self.headers, verify=False)
             if response.status_code == 200:
+                # If owning team is specified and repo exists, ensure the team has admin access
+                if owning_team:
+                    self.set_team_permission(repo_name, owning_team, "admin")
                 return response.json()
             elif response.status_code == 404 and create:
                 logger.info(f"Creating repository {repo_name}")
@@ -140,6 +145,9 @@ class GitHubClient:
                         try:
                             # Try to get the main branch's reference
                             self.get_reference_sha(repo_name, "heads/main")
+                            # If owning team is specified, give them admin access
+                            if owning_team:
+                                self.set_team_permission(repo_name, owning_team, "admin")
                             return repo
                         except Exception:
                             # If reference doesn't exist yet, wait and retry
@@ -639,6 +647,45 @@ class GitHubClient:
             logger.error(error_message)
             raise Exception(error_message)
 
+    def set_team_permission(self, repo_name, team_name, permission):
+        """Set a team's permission on a repository
+        
+        Args:
+            repo_name (str): Name of the repository
+            team_name (str): Name of the team
+            permission (str): Permission level (pull, push, admin)
+        """
+        # First get the team ID from the team name
+        team_url = f"{self.api_base_url}/orgs/{self.org_name}/teams/{team_name}"
+        try:
+            team_response = requests.get(team_url, headers=self.headers, verify=False)
+            if team_response.status_code != 200:
+                error_message = f"Failed to get team {team_name}: {team_response.status_code} - {team_response.text}"
+                logger.error(error_message)
+                raise Exception(error_message)
+                
+            team_id = team_response.json()["id"]
+            
+            # Add team to repository with specified permission
+            perm_url = f"{self.api_base_url}/orgs/{self.org_name}/teams/{team_name}/repos/{self.org_name}/{repo_name}"
+            data = {
+                "permission": permission
+            }
+            
+            response = requests.put(perm_url, headers=self.headers, json=data, verify=False)
+            
+            if response.status_code not in (200, 204):
+                error_message = f"Failed to set team permission: {response.status_code} - {response.text}"
+                logger.error(error_message)
+                raise Exception(error_message)
+                
+            logger.info(f"Successfully set {permission} permission for team {team_name} on {repo_name}")
+            
+        except requests.exceptions.RequestException as e:
+            error_message = f"Error setting team permission: {str(e)}"
+            logger.error(error_message)
+            raise Exception(error_message)
+
 def generate_repository_name(project_name):
     """Generate repository name based on prefix or project name
     
@@ -679,7 +726,7 @@ def get_parameter(name, default=None, decrypt=False):
         logger.warning(f"Error getting parameter {name}: {str(e)}")
         return os.environ.get(name, default)
 
-def operate_github(new_repo_name, template_settings, trigger_init_workflow=False):
+def operate_github(new_repo_name, template_settings, trigger_init_workflow=False, owning_team=None):
     """Write template settings to config file and create/update repository using GitHub API
 
     This implementation uses only the requests library and does not rely on git CLI
@@ -689,6 +736,7 @@ def operate_github(new_repo_name, template_settings, trigger_init_workflow=False
         new_repo_name (str): Name of the new GitHub repo
         template_settings (json): Input JSON data with all parameter values
         trigger_init_workflow (bool): Whether to trigger the init-repo workflow after setup
+        owning_team (str, optional): Name of the GitHub team to give admin access
 
     Returns:
         None
@@ -706,7 +754,7 @@ def operate_github(new_repo_name, template_settings, trigger_init_workflow=False
     github_api = get_parameter("GITHUB_API")  # Required
     if not github_api:
         raise ValueError("GITHUB_API must be configured in Parameter Store or environment")
-        
+    
     org_name = get_parameter("GITHUB_ORG_NAME")  # Required
     if not org_name:
         raise ValueError("GITHUB_ORG_NAME must be configured in Parameter Store or environment")
@@ -766,7 +814,7 @@ def operate_github(new_repo_name, template_settings, trigger_init_workflow=False
     
     # Get or create the new repository
     logger.info(f"Getting or creating repository: {actual_repo_name}")
-    new_repo = github.get_repository(actual_repo_name, create=True)
+    new_repo = github.get_repository(actual_repo_name, create=True, owning_team=owning_team)
     
     # Clone the original repository contents from specific commit
     tree = github.get_tree(template_repo_name, source_commit_sha, recursive=True)
@@ -848,10 +896,12 @@ def lambda_handler(event, context):
     project_name = input_data.get("project_name")
     template_settings = input_data.get("template_settings")
     trigger_init_workflow = input_data.get("trigger_init_workflow", False)
+    owning_team = input_data.get("owning_team")  # Get owning team from input
     
     logger.info(f"Project name: {project_name}")
     logger.info(f"Template settings to be applied: {json.dumps(template_settings, indent=2)}")
     logger.info(f"Trigger init workflow: {trigger_init_workflow}")
+    logger.info(f"Owning team: {owning_team}")
 
     if not project_name:
         logger.error("Missing project name in input")
@@ -862,7 +912,7 @@ def lambda_handler(event, context):
 
     try:
         logger.info(f"Starting GitHub operations for project: {project_name}")
-        operate_github(project_name, template_settings, trigger_init_workflow)
+        operate_github(project_name, template_settings, trigger_init_workflow, owning_team)
         logger.info("GitHub operations completed successfully")
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error(f"Error in operate_github: {str(e)}")
