@@ -1,8 +1,27 @@
 ####################################################################################
-# This Lambda function takes JSON input and writes it directly to a config.json file
-# in a cloned GitHub repository. The changes are then committed and pushed to the 
-# GitHub API, creating a new repository for the EKS CI/CD pipeline.
-# This implementation uses only pure Python with requests library (no Git CLI dependency).
+# This Lambda function creates new GitHub repositories from a template repository.
+# It takes JSON input and writes it to a configurable config file in the new repo.
+# Key features:
+# - Template agnostic: Can be used with any type of template repository
+# - Team-based admin access: Set owning team with full admin access
+# - Configurable settings via Parameter Store (with prefix) or environment variables:
+#   - PARAM_STORE_PREFIX: Prefix for SSM parameters (default: /template-automation)
+#   - TEMPLATE_CONFIG_FILE: Name of config file to write (default: config.json)
+#   - TEMPLATE_TOPICS: Comma-separated list of topics to add (default: infrastructure)
+#   - TEMPLATE_REPO_NAME: Source template repository name (required)
+#   - TEMPLATE_SOURCE_VERSION: Version/tag/SHA to use from template (optional)
+#   - REPO_NAME_PREFIX: Prefix for generated repository names (optional)
+#   - GITHUB_API: GitHub API URL (required)
+#   - GITHUB_ORG_NAME: GitHub organization name (required)
+#   - GITHUB_COMMIT_AUTHOR_NAME: Name for commits (default: Template Automation)
+#   - GITHUB_COMMIT_AUTHOR_EMAIL: Email for commits (default: automation@example.com)
+#   - SECRET_NAME: AWS Secrets Manager secret containing GitHub token (required)
+#
+# Repository naming:
+# - If REPO_NAME_PREFIX is set: Creates repos named {prefix}-{random-8-chars}
+# - If not set: Uses the provided project name directly
+#
+# Implementation uses pure Python with requests library (no Git CLI dependency).
 ####################################################################################
 
 import os
@@ -17,6 +36,7 @@ import urllib3
 from urllib.parse import urlparse
 from datetime import datetime
 import traceback
+import uuid
 
 import boto3
 from botocore.exceptions import ClientError
@@ -29,7 +49,10 @@ logger = logging.getLogger()
 logger.setLevel("INFO")  # Set to "ERROR" to reduce logging messages.
 
 # Get environment variables
-SECRET_NAME = os.environ["SECRET_NAME"]
+GITHUB_TOKEN_SECRET_NAME = os.environ.get("GITHUB_TOKEN_SECRET_NAME")
+DEFAULT_CONFIG_FILE = os.environ.get("TEMPLATE_CONFIG_FILE", "config.json")
+DEFAULT_TOPICS = os.environ.get("TEMPLATE_TOPICS", "infrastructure").split(",")
+PARAM_STORE_PREFIX = os.environ.get("PARAM_STORE_PREFIX", "/template-automation")
 
 class GitHubClient:
     """A class to interact with GitHub API without relying on external Git binaries.
@@ -73,12 +96,13 @@ class GitHubClient:
             "Content-Type": "application/json"
         }
         
-    def get_repository(self, repo_name, create=False):
+    def get_repository(self, repo_name, create=False, owning_team=None):
         """Get or create a repository
         
         Args:
             repo_name (str): Name of the repository
             create (bool, optional): Create the repository if it doesn't exist
+            owning_team (str, optional): Name of the GitHub team to give admin access
             
         Returns:
             dict: Repository information from GitHub API
@@ -87,6 +111,9 @@ class GitHubClient:
         try:
             response = requests.get(get_url, headers=self.headers, verify=False)
             if response.status_code == 200:
+                # If owning team is specified and repo exists, ensure the team has admin access
+                if owning_team:
+                    self.set_team_permission(repo_name, owning_team, "admin")
                 return response.json()
             elif response.status_code == 404 and create:
                 logger.info(f"Creating repository {repo_name}")
@@ -118,6 +145,9 @@ class GitHubClient:
                         try:
                             # Try to get the main branch's reference
                             self.get_reference_sha(repo_name, "heads/main")
+                            # If owning team is specified, give them admin access
+                            if owning_team:
+                                self.set_team_permission(repo_name, owning_team, "admin")
                             return repo
                         except Exception:
                             # If reference doesn't exist yet, wait and retry
@@ -569,35 +599,177 @@ class GitHubClient:
         
         return target_branch
 
-def operate_github(new_repo_name, eks_settings):
-    """Write EKS settings to config.json and create/update repository using GitHub API
+    def _get_secret_value(self):
+        """Retrieve GitHub token from AWS Secrets Manager"""
+        try:
+            session = boto3.session.Session()
+            client = session.client(
+                service_name='secretsmanager',
+                region_name=os.environ.get('AWS_REGION', 'us-east-1')
+            )
+            
+            response = client.get_secret_value(SecretId=GITHUB_TOKEN_SECRET_NAME)
+            if 'SecretString' in response:
+                return response['SecretString']
+            raise ValueError("Secret value not found in response")
+            
+        except ClientError as e:
+            logger.error(f"Failed to retrieve secret: {str(e)}")
+            raise Exception("Failed to retrieve GitHub token from Secrets Manager") from e
+
+    def trigger_workflow(self, repo_name, workflow_id="init-repo.yml", ref="main", inputs=None):
+        """Trigger a GitHub Actions workflow in the repository
+        
+        Args:
+            repo_name (str): Name of the repository
+            workflow_id (str): The ID or filename of the workflow to trigger
+            ref (str): The git reference to run the workflow on
+            inputs (dict, optional): Input parameters for the workflow
+            
+        Returns:
+            dict: Response from the workflow dispatch API
+        """
+        api_url = f"{self.api_base_url}/repos/{self.org_name}/{repo_name}/actions/workflows/{workflow_id}/dispatches"
+        
+        data = {
+            "ref": ref,
+        }
+        if inputs:
+            data["inputs"] = inputs
+            
+        response = requests.post(api_url, headers=self.headers, json=data, verify=False)
+        
+        if response.status_code == 204:  # GitHub returns 204 No Content for successful workflow dispatch
+            logger.info(f"Successfully triggered workflow {workflow_id} in {repo_name}")
+            return {"status": "success"}
+        else:
+            error_message = f"Failed to trigger workflow {workflow_id} in {repo_name}: {response.status_code} - {response.text}"
+            logger.error(error_message)
+            raise Exception(error_message)
+
+    def set_team_permission(self, repo_name, team_name, permission):
+        """Set a team's permission on a repository
+        
+        Args:
+            repo_name (str): Name of the repository
+            team_name (str): Name of the team
+            permission (str): Permission level (pull, push, admin)
+        """
+        # First get the team ID from the team name
+        team_url = f"{self.api_base_url}/orgs/{self.org_name}/teams/{team_name}"
+        try:
+            team_response = requests.get(team_url, headers=self.headers, verify=False)
+            if team_response.status_code != 200:
+                error_message = f"Failed to get team {team_name}: {team_response.status_code} - {team_response.text}"
+                logger.error(error_message)
+                raise Exception(error_message)
+                
+            team_id = team_response.json()["id"]
+            
+            # Add team to repository with specified permission
+            perm_url = f"{self.api_base_url}/orgs/{self.org_name}/teams/{team_name}/repos/{self.org_name}/{repo_name}"
+            data = {
+                "permission": permission
+            }
+            
+            response = requests.put(perm_url, headers=self.headers, json=data, verify=False)
+            
+            if response.status_code not in (200, 204):
+                error_message = f"Failed to set team permission: {response.status_code} - {response.text}"
+                logger.error(error_message)
+                raise Exception(error_message)
+                
+            logger.info(f"Successfully set {permission} permission for team {team_name} on {repo_name}")
+            
+        except requests.exceptions.RequestException as e:
+            error_message = f"Error setting team permission: {str(e)}"
+            logger.error(error_message)
+            raise Exception(error_message)
+
+def generate_repository_name(project_name):
+    """Generate repository name based on prefix or project name
+    
+    Args:
+        project_name (str): Name of the project
+        
+    Returns:
+        str: Generated repository name
+    """
+    prefix = os.environ.get("REPO_NAME_PREFIX")
+    if prefix:
+        # Generate a short random string (first 8 chars of UUID)
+        random_suffix = str(uuid.uuid4())[:8]
+        return f"{prefix}-{random_suffix}"
+    return project_name
+
+def get_parameter(name, default=None, decrypt=False):
+    """Get parameter from SSM Parameter Store or environment variable
+    
+    Args:
+        name (str): Parameter name
+        default (str, optional): Default value if not found
+        decrypt (bool, optional): Whether to decrypt the value
+        
+    Returns:
+        str: Parameter value
+    """
+    # Try Parameter Store first with configured prefix
+    ssm = boto3.client('ssm')
+    param_name = f"{PARAM_STORE_PREFIX}/{name}"
+    try:
+        response = ssm.get_parameter(Name=param_name, WithDecryption=decrypt)
+        return response['Parameter']['Value']
+    except ssm.exceptions.ParameterNotFound:
+        # Fall back to environment variable
+        return os.environ.get(name, default)
+    except Exception as e:
+        logger.warning(f"Error getting parameter {name}: {str(e)}")
+        return os.environ.get(name, default)
+
+def operate_github(new_repo_name, template_settings, trigger_init_workflow=False, owning_team=None):
+    """Write template settings to config file and create/update repository using GitHub API
 
     This implementation uses only the requests library and does not rely on git CLI
     or any external binaries.
 
     Args:
         new_repo_name (str): Name of the new GitHub repo
-        eks_settings (json): Input JSON data with all the EKS parameter values
+        template_settings (json): Input JSON data with all parameter values
+        trigger_init_workflow (bool): Whether to trigger the init-repo workflow after setup
+        owning_team (str, optional): Name of the GitHub team to give admin access
 
     Returns:
         None
     """
     logger.info("Starting GitHub repository operation")
-    logger.info(f"Target repository name: {new_repo_name}")
-
+    
+    # Generate the actual repository name
+    actual_repo_name = generate_repository_name(new_repo_name)
+    logger.info(f"Using repository name: {actual_repo_name}")
+    
     token = github_token()
     logger.info("Successfully retrieved GitHub token from Secrets Manager")
 
-    github_api = os.environ.get("GITHUB_API")  # No default - must be configured
-    org_name = os.environ.get("GITHUB_ORG_NAME")  # No default - must be configured
-    commit_author_email = os.environ.get("GITHUB_COMMIT_AUTHOR_EMAIL", "eks-automation@example.com")
-    commit_author_name = os.environ.get("GITHUB_COMMIT_AUTHOR_NAME", "EKS Automation Lambda")
-    source_version = os.environ.get("TEMPLATE_SOURCE_VERSION")  # Optional
-    template_repo_name = os.environ.get("TEMPLATE_REPO_NAME", "template-eks-cluster")
-    config_file_name = "config.json"
+    # Get all configuration from Parameter Store or environment variables
+    github_api = get_parameter("GITHUB_API")  # Required
+    if not github_api:
+        raise ValueError("GITHUB_API must be configured in Parameter Store or environment")
     
+    org_name = get_parameter("GITHUB_ORG_NAME")  # Required
+    if not org_name:
+        raise ValueError("GITHUB_ORG_NAME must be configured in Parameter Store or environment")
+        
+    commit_author_email = get_parameter("GITHUB_COMMIT_AUTHOR_EMAIL", "automation@example.com")
+    commit_author_name = get_parameter("GITHUB_COMMIT_AUTHOR_NAME", "Template Automation")
+    source_version = get_parameter("TEMPLATE_SOURCE_VERSION")
+    template_repo_name = get_parameter("TEMPLATE_REPO_NAME")  # Required
+    if not template_repo_name:
+        raise ValueError("TEMPLATE_REPO_NAME must be configured in Parameter Store or environment")
+        
+    config_file_name = get_parameter("TEMPLATE_CONFIG_FILE", DEFAULT_CONFIG_FILE)
+
     # Create work directory if it doesn't exist
-    work_dir = f"/tmp/{new_repo_name}"
+    work_dir = f"/tmp/{actual_repo_name}"
     if os.path.exists(work_dir):
         shutil.rmtree(work_dir, ignore_errors=False, onerror=remove_readonly)
     os.makedirs(work_dir, exist_ok=True)
@@ -641,33 +813,44 @@ def operate_github(new_repo_name, eks_settings):
     logger.info(f"Using source commit SHA: {source_commit_sha}")
     
     # Get or create the new repository
-    logger.info(f"Getting or creating repository: {new_repo_name}")
-    new_repo = github.get_repository(new_repo_name, create=True)
+    logger.info(f"Getting or creating repository: {actual_repo_name}")
+    new_repo = github.get_repository(actual_repo_name, create=True, owning_team=owning_team)
     
     # Clone the original repository contents from specific commit
     tree = github.get_tree(template_repo_name, source_commit_sha, recursive=True)
     github.download_repository_files(template_repo_name, tree, work_dir)
     
-    # Write EKS settings directly to config.json
+    # Write template settings to config file
     output_file_path = os.path.join(work_dir, config_file_name)
-    logger.info(f"Writing EKS settings to {output_file_path}")
+    logger.info(f"Writing template settings to {output_file_path}")
     with open(output_file_path, "w") as file:
-        json.dump(eks_settings, file, indent=2)
+        json.dump(template_settings, file, indent=2)
+    
+    # Write version information to .source-version file if source_version is specified
+    if source_version:
+        version_file_path = os.path.join(work_dir, ".source-version")
+        logger.info(f"Writing version information to {version_file_path}")
+        with open(version_file_path, "w") as file:
+            file.write(source_version)
     
     # Commit all files to the new repository's main branch explicitly
-    commit_message = "Add the EKS configuration file by the Lambda function"
-    github.commit_repository_contents(new_repo_name, work_dir, commit_message, branch="main")
+    commit_message = "Add template configuration by automation"
+    github.commit_repository_contents(actual_repo_name, work_dir, commit_message, branch="main")
     
-    # Add relevant topics to the repository including EKS commit SHA
-    topics = [
-        "eks",
-        "kubernetes", 
-        "infrastructure",
-        f"eks:{source_commit_sha[:7]}"  # Use first 7 chars of SHA
-    ]
-    github.update_repository_topics(new_repo_name, topics)
+    # Add configurable topics to the repository
+    topics = DEFAULT_TOPICS
     
-    logger.info(f"Successfully updated {new_repo_name} repository")
+    github.update_repository_topics(actual_repo_name, topics)
+    
+    logger.info(f"Successfully updated {actual_repo_name} repository")
+
+    # Trigger init workflow if requested
+    if trigger_init_workflow:
+        try:
+            github.trigger_workflow(actual_repo_name)
+            logger.info("Successfully triggered init-repo workflow")
+        except Exception as e:
+            logger.warning(f"Failed to trigger init-repo workflow: {str(e)}")
 
 def github_token():
     """Retrieve GitHub access token from AWS Secrets Manager
@@ -711,9 +894,14 @@ def lambda_handler(event, context):
     logger.info(f"Extracted input data from event body: {json.dumps(input_data, indent=2)}")
 
     project_name = input_data.get("project_name")
-    eks_settings = input_data.get("eks_settings")
+    template_settings = input_data.get("template_settings")
+    trigger_init_workflow = input_data.get("trigger_init_workflow", False)
+    owning_team = input_data.get("owning_team")  # Get owning team from input
+    
     logger.info(f"Project name: {project_name}")
-    logger.info(f"EKS settings to be applied: {json.dumps(eks_settings, indent=2)}")
+    logger.info(f"Template settings to be applied: {json.dumps(template_settings, indent=2)}")
+    logger.info(f"Trigger init workflow: {trigger_init_workflow}")
+    logger.info(f"Owning team: {owning_team}")
 
     if not project_name:
         logger.error("Missing project name in input")
@@ -724,7 +912,7 @@ def lambda_handler(event, context):
 
     try:
         logger.info(f"Starting GitHub operations for project: {project_name}")
-        operate_github(project_name, eks_settings)
+        operate_github(project_name, template_settings, trigger_init_workflow, owning_team)
         logger.info("GitHub operations completed successfully")
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error(f"Error in operate_github: {str(e)}")

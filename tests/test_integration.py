@@ -5,7 +5,7 @@ import uuid
 from eks_automation.app import lambda_handler
 
 # Test environment variables
-os.environ["SECRET_NAME"] = "github-token"  # Uses AWS Secrets Manager
+os.environ["GITHUB_TOKEN_SECRET_NAME"] = "github-token"  # Uses AWS Secrets Manager
 os.environ["GITHUB_API"] = "https://api.github.com"
 os.environ["GITHUB_ORG_NAME"] = "your-org-name"  # Replace with test org
 os.environ["TEMPLATE_REPO_NAME"] = "template-eks-cluster"
