@@ -26,14 +26,14 @@ source "docker" "lambda" {
 }
 
 build {
-  name = "eks-automation-lambda"
+  name = "template-automation-lambda"
   
   sources = [
     "source.docker.lambda"
   ]
 
   provisioner "file" {
-    source      = "./eks_automation/"
+    source      = "./template_automation/"
     destination = "/var/task"
   }
 
