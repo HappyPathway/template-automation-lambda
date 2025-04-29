@@ -1,6 +1,49 @@
-import pytest
 import os
-import json
+import pytest
+from github import Github
+import time
+
+@pytest.fixture(scope="session")
+def github_client():
+    """Create a GitHub client for integration tests."""
+    token = os.environ.get("GITHUB_TOKEN")
+    if not token:
+        pytest.skip("GITHUB_TOKEN environment variable not set")
+    
+    api_url = os.environ.get("GITHUB_API", "https://api.github.com")
+    return Github(base_url=api_url, login_or_token=token)
+
+@pytest.fixture(scope="session")
+def cleanup_mode():
+    """Determine if repositories should be deleted or just archived."""
+    return os.environ.get("INTEGRATION_TEST_DELETE_REPOS", "").lower() in ("true", "1", "yes")
+
+@pytest.fixture
+def test_repo(github_client, cleanup_mode, request):
+    """Create a test repository and clean it up after the test."""
+    org_name = os.environ.get("GITHUB_ORG")
+    if not org_name:
+        pytest.skip("GITHUB_ORG environment variable not set")
+    
+    # Create a unique repo name for this test
+    repo_name = f"test-repo-{pytest.config.getoption('--timestamp', default='')}-{id(request)}"
+    
+    org = github_client.get_organization(org_name)
+    repo = org.create_repo(
+        repo_name,
+        description="Temporary repository for integration testing",
+        private=True
+    )
+    
+    yield repo
+    
+    # Clean up after the test
+    if cleanup_mode:
+        # Delete the repository
+        repo.delete()
+    else:
+        # Archive the repository (the original behavior)
+        repo.edit(archived=True)
 
 @pytest.fixture
 def github_client_params():
@@ -72,3 +115,8 @@ def mock_reference_response():
             "type": "commit"
         }
     }
+
+def pytest_addoption(parser):
+    """Add custom command line options."""
+    timestamp = int(time.time())
+    parser.addoption("--timestamp", action="store", default=str(timestamp))

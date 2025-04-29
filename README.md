@@ -165,7 +165,7 @@ cd eks_automation
 python -m pytest tests/ -v -m integration
 ```
 
-Note: Integration tests will create temporary repositories in your GitHub organization. These repositories will be archived (not deleted) after the tests complete.
+Note: Integration tests will create temporary repositories in your GitHub organization. These repositories will be archived (not deleted) after the tests complete. To implement full cleanup, the test code would need to be modified to delete repositories instead of archiving them.
 
 ## Resources
 
