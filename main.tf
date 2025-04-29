@@ -1,3 +1,8 @@
+# 
+# This Terraform configuration creates only the ECR repository for the container image.
+# The Lambda function, API Gateway, IAM roles, and other infrastructure are managed by 
+# the terraform-aws-template-automation module.
+
 provider "aws" {
   region = var.aws_region
 }
