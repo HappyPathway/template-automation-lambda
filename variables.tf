@@ -1,3 +1,11 @@
+
+# Note: GitHub-specific variables (github_api, github_org_name, template_repo_name, etc.)
+# have been moved to the terraform-aws-template-automation module.
+# They are now configured as SSM parameters in that module.
+#
+# This file contains only variables related to the container image and
+# ECR repository setup.
+
 variable "aws_region" {
   description = "AWS region where resources will be created"
   type        = string
@@ -14,36 +22,6 @@ variable "environment" {
   description = "Environment tag value"
   type        = string
   default     = "production"
-}
-
-variable "github_api" {
-  description = "URL for the GitHub Enterprise API"
-  type        = string
-  default     = "https://github.enterprise.example.com/api/v3"
-}
-
-variable "github_org_name" {
-  description = "GitHub organization name"
-  type        = string
-  default     = "your-org"
-}
-
-variable "github_token_secret_name" {
-  description = "AWS SSM parameter name for the GitHub token"
-  type        = string
-  default     = "/github/token"
-}
-
-variable "template_repo_name" {
-  description = "GitHub repository name for the EKS template"
-  type        = string
-  default     = "template-eks-cluster"
-}
-
-variable "template_file_name" {
-  description = "Template file name for the EKS configuration"
-  type        = string
-  default     = "eks.hcl.j2"
 }
 
 variable "catalog_data" {

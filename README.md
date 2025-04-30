@@ -9,10 +9,25 @@ with custom configurations from your template.
 
 ## Architecture
 
-- AWS Lambda container image built with Packer and stored in ECR
+- AWS Lambda container image built with Packer and stored in ECR 
 - Infrastructure managed with Terraform
 - Automated CI/CD using GitHub Actions
 - Secret management using AWS Systems Manager Parameter Store
+
+## Repository Structure
+
+This project is split into two repositories:
+
+1. **template-automation-lambda** (this repository)
+   - Contains the Lambda function source code
+   - Builds the container image with Packer
+   - Publishes the image to ECR
+
+2. **terraform-aws-template-automation**
+   - Terraform module that deploys the Lambda infrastructure
+   - Creates and configures all required AWS resources
+   - Manages GitHub-specific configuration via SSM parameters
+   - Handles permissions, API Gateway, and other infrastructure
 
 ## Prerequisites
 
@@ -22,6 +37,38 @@ with custom configurations from your template.
 - Terraform
 - Packer
 - Python 3.11+
+
+## Configuration
+
+### Lambda Configuration
+
+The Lambda function gets its configuration from SSM Parameter Store with the following parameters:
+
+- `/template-automation/GITHUB_API` - GitHub API URL
+- `/template-automation/GITHUB_ORG_NAME` - GitHub organization name
+- `/template-automation/TEMPLATE_REPO_NAME` - Name of the template repository
+- `/template-automation/TEMPLATE_CONFIG_FILE` - Name of the config file (default: config.json)
+- `/template-automation/GITHUB_COMMIT_AUTHOR_NAME` - Name for commit author
+- `/template-automation/GITHUB_COMMIT_AUTHOR_EMAIL` - Email for commit author
+- `/template-automation/TEMPLATE_TOPICS` - Comma-separated list of repository topics
+
+### Terraform Module Configuration
+
+These parameters are managed by the `terraform-aws-template-automation` module. When deploying
+the Lambda function using the Terraform module, configure these variables in the module:
+
+```hcl
+module "template_automation" {
+  source = "github.com/HappyPathway/terraform-aws-template-automation"
+
+  # GitHub configuration
+  github_api_url            = "https://api.github.com"
+  github_org_name           = "your-org"
+  template_repo_name        = "your-template-repo"
+  
+  # Other module configuration...
+}
+```
 
 ## Local Development
 
@@ -118,7 +165,7 @@ cd eks_automation
 python -m pytest tests/ -v -m integration
 ```
 
-Note: Integration tests will create temporary repositories in your GitHub organization. These repositories will be archived (not deleted) after the tests complete.
+Note: Integration tests will create temporary repositories in your GitHub organization. These repositories will be archived (not deleted) after the tests complete. To implement full cleanup, the test code would need to be modified to delete repositories instead of archiving them.
 
 ## Resources
 
