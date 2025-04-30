@@ -24,38 +24,8 @@ jobs:
           echo "aws_account=${AWS_ACCOUNT}" >> $GITHUB_OUTPUT
           echo "environment=${ENVIRONMENT}" >> $GITHUB_OUTPUT
 
-  expand-config:
-    needs: determine-environment
-    runs-on: [ "${{ needs.determine-environment.outputs.aws_account }}" ]
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-          
-      - name: Install Ansible
-        run: |
-          python -m pip install --upgrade pip
-          pip install ansible jinja2
-          
-      - name: Run HCL Generator
-        run: |
-          cd ansible
-          ansible-playbook generate_hcl_files.yml
-          
-      - name: Commit HCL Files
-        run: |
-          git config --global user.name "GitHub Actions Bot"
-          git config --global user.email "actions@github.com"
-          git add environment/
-          git commit -m "Generate HCL files from config" || echo "No changes to commit"
-          git push origin HEAD:${{ github.head_ref }}
-
   terraform-plan:
-    needs: [ determine-environment, expand-config ]
+    needs: [ determine-environment ]
     runs-on: [ "${{ needs.determine-environment.outputs.aws_account }}" ]
     
     steps:

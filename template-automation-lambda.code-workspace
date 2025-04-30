@@ -1,15 +1,23 @@
 {
 	"folders": [
 		{
+			"name": "template-eks-cluster",
+			"path": "../template-eks-cluster"
+		},
+		{
+			"name": "template-automation-lambda",
 			"path": "."
 		},
 		{
+			"name": "terraform-aws-template-automation",
 			"path": "../terraform-aws-template-automation"
 		},
 		{
+			"name": "d",
 			"path": "../providers/terraform-provider-aws/website/docs/d"
 		},
 		{
+			"name": "r",
 			"path": "../providers/terraform-provider-aws/website/docs/r"
 		}
 	],

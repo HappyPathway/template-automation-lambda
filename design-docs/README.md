@@ -11,6 +11,14 @@ This is the terraform module that is repsonsible for deploying our Lambda functi
 ### template-automation-lambda
 This is actual Lambda function, this repo creates a Docker image that we deploy to Lambda. Our actual lambda code is in template_automation/app.py.
 
+### Build Infrastructure Requirements
+The Terraform configuration in this repository is specifically for building the Lambda container image in ECR. Due to tooling restrictions and access requirements, the build process must be executed in GitHub.com rather than in the target organization's environment. This means:
+
+- The container image build pipeline runs in GitHub.com
+- Terraform in this repo manages only build-related resources (ECR repository, build IAM roles)
+- The build process cannot access internal tools or resources of the target organization
+- The resulting container image is then referenced by the terraform-aws-template-automation module for actual deployment
+
 ## Overview
 This document outlines the implementation plan for enhancing the EKS Automation Lambda to improve its GitHub integration workflow and testing capabilities. Most of this work will take place in template_automation/app.py
 
