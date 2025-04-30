@@ -1,0 +1,7 @@
+# Runner configuration for different AWS accounts
+# Format: environment_name: aws_account_id
+
+dev: dev-account-runner
+staging: staging-account-runner
+prod: prod-account-runner
+lab: lab-account-runner
