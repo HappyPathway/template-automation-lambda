@@ -686,6 +686,91 @@ class GitHubClient:
             logger.error(error_message)
             raise Exception(error_message)
 
+    def create_branch(self, repo_name, branch_name, from_ref="main"):
+        """Create a new branch in the repository
+        
+        Args:
+            repo_name (str): Name of the repository
+            branch_name (str): Name of the branch to create
+            from_ref (str): Reference to create branch from (default: main)
+            
+        Returns:
+            dict: Branch creation response from GitHub API
+        """
+        try:
+            # Get the SHA of the reference we're branching from
+            base_sha = self.get_reference_sha(repo_name, f"heads/{from_ref}")
+            
+            # Create the new branch reference
+            create_ref_url = f"{self.api_base_url}/repos/{self.org_name}/{repo_name}/git/refs"
+            ref_data = {
+                "ref": f"refs/heads/{branch_name}",
+                "sha": base_sha
+            }
+            
+            response = requests.post(
+                create_ref_url,
+                headers=self.headers,
+                json=ref_data,
+                verify=False
+            )
+            
+            if response.status_code == 201:
+                logger.info(f"Created branch {branch_name} in {repo_name}")
+                return response.json()
+            else:
+                error_message = f"Failed to create branch: {response.status_code} - {response.text}"
+                logger.error(error_message)
+                raise Exception(error_message)
+                
+        except Exception as e:
+            error_message = f"Error creating branch: {str(e)}"
+            logger.error(error_message)
+            raise Exception(error_message)
+
+    def create_pull_request(self, repo_name, title, head_branch, base_branch="main", body=None):
+        """Create a pull request
+        
+        Args:
+            repo_name (str): Name of the repository
+            title (str): Title of the pull request
+            head_branch (str): Name of the branch containing changes
+            base_branch (str): Name of the branch to merge into
+            body (str, optional): Description of the pull request
+            
+        Returns:
+            dict: Pull request creation response from GitHub API
+        """
+        try:
+            create_pr_url = f"{self.api_base_url}/repos/{self.org_name}/{repo_name}/pulls"
+            
+            pr_data = {
+                "title": title,
+                "head": head_branch,
+                "base": base_branch,
+                "body": body or "Created by Template Automation"
+            }
+            
+            response = requests.post(
+                create_pr_url,
+                headers=self.headers,
+                json=pr_data,
+                verify=False
+            )
+            
+            if response.status_code == 201:
+                logger.info(f"Created pull request in {repo_name}: {title}")
+                return response.json()
+            else:
+                error_message = f"Failed to create pull request: {response.status_code} - {response.text}"
+                logger.error(error_message)
+                raise Exception(error_message)
+                
+        except Exception as e:
+            error_message = f"Error creating pull request: {str(e)}"
+            logger.error(error_message)
+            raise Exception(error_message)
+
 def generate_repository_name(project_name):
     """Generate repository name based on prefix or project name
     
@@ -833,16 +918,27 @@ def operate_github(new_repo_name, template_settings, trigger_init_workflow=False
         with open(version_file_path, "w") as file:
             file.write(source_version)
     
-    # Commit all files to the new repository's main branch explicitly
+    # Create init-cluster branch and commit changes there
+    branch_name = "init-cluster"
     commit_message = "Add template configuration by automation"
-    github.commit_repository_contents(actual_repo_name, work_dir, commit_message, branch="main")
+    
+    # Create the init-cluster branch from main
+    github.create_branch(actual_repo_name, branch_name, from_ref="main")
+    
+    # Commit all files to the init-cluster branch
+    github.commit_repository_contents(actual_repo_name, work_dir, commit_message, branch=branch_name)
+    
+    # Create pull request to merge init-cluster into main
+    pr_title = "Initial cluster configuration"
+    pr_body = f"Automated pull request for initializing cluster configuration.\n\nProject: {actual_repo_name}"
+    github.create_pull_request(actual_repo_name, pr_title, branch_name, base_branch="main", body=pr_body)
     
     # Add configurable topics to the repository
     topics = DEFAULT_TOPICS
     
     github.update_repository_topics(actual_repo_name, topics)
     
-    logger.info(f"Successfully updated {actual_repo_name} repository")
+    logger.info(f"Successfully updated {actual_repo_name} repository and created PR from {branch_name} to main")
 
     # Trigger init workflow if requested
     if trigger_init_workflow:
@@ -860,7 +956,7 @@ def github_token():
     """
     secrets = boto3.client("secretsmanager")
     try:
-        secret = secrets.get_secret_value(SecretId=SECRET_NAME)
+        secret = secrets.get_secret_value(SecretId=GITHUB_TOKEN_SECRET_NAME)
         return secret["SecretString"]
     except ClientError as e:
         logger.error(f"Error occurred when retrieving GitHub token from Secrets Manager: {str(e)}")
