@@ -1,7 +1,7 @@
-"""Models for template automation using Pydantic."""
+"""Models for template automation."""
 
+from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
-from typing import Dict, List, Optional, Any
 
 class GitHubConfig(BaseModel):
     """Encapsulates configuration settings for interacting with the GitHub API.
@@ -28,11 +28,33 @@ class GitHubConfig(BaseModel):
 class WorkflowConfig(BaseModel):
     """Defines the configuration for a GitHub Actions workflow.
 
+    This class represents a single GitHub Actions workflow configuration,
+    including its template source and destination paths, along with any
+    variables needed for template rendering.
+
     Attributes:
-        name (str): The name of the workflow.
-        template_path (str): The path to the workflow template file.
-        output_path (str): The path where the rendered workflow file will be saved.
-        variables (Dict[str, Any]): A dictionary of variables to substitute in the template.
+        name (str): Descriptive name of the workflow, used for logging and
+            identification purposes.
+        template_path (str): Path to the Jinja2 template file containing the
+            workflow definition. This path should be relative to the template
+            root directory.
+        output_path (str): Destination path where the rendered workflow file
+            will be saved in the new repository. This path should be relative
+            to the repository root.
+        variables (Dict[str, Any]): Dictionary of variables to use when
+            rendering the workflow template. These values will be passed to
+            the Jinja2 template engine.
+
+    Example:
+        >>> workflow = WorkflowConfig(
+        ...     name="CI/CD Pipeline",
+        ...     template_path="workflows/ci.yml.j2",
+        ...     output_path=".github/workflows/ci.yml",
+        ...     variables={
+        ...         "python_version": "3.9",
+        ...         "test_commands": ["pytest", "flake8"]
+        ...     }
+        ... )
     """
     name: str
     template_path: str
@@ -42,14 +64,29 @@ class WorkflowConfig(BaseModel):
 class PRConfig(BaseModel):
     """Specifies the configuration for creating pull requests.
 
+    This class defines the structure and default values for pull request creation,
+    including templates for title and body, branch configuration, and PR metadata
+    like labels and reviewers.
+
     Attributes:
-        title_template (str): The template for the pull request title.
-        body_template (str): The template for the pull request body.
-        base_branch (str): The base branch for the pull request.
-        branch_prefix (str): The prefix for the branch name.
-        labels (List[str]): A list of labels to apply to the pull request.
-        reviewers (List[str]): A list of reviewers to request for the pull request.
-        assignees (List[str]): A list of assignees for the pull request.
+        title_template (str): Jinja2 template for the pull request title. Variables
+            available include: repo_name, template_repo.
+        body_template (str): Jinja2 template for the pull request body. Variables
+            available include: repo_name, template_repo, workflow_files.
+        base_branch (str): The target branch for the pull request. Defaults to "main".
+        branch_prefix (str): Prefix for the feature branch name. The final branch name
+            will be {prefix}-{repo_name}.
+        labels (List[str]): Labels to automatically apply to the pull request.
+            Defaults to ["automated"].
+        reviewers (List[str]): GitHub usernames of reviewers to assign.
+        assignees (List[str]): GitHub usernames of users to assign to the PR.
+
+    Example:
+        >>> pr_config = PRConfig(
+        ...     title_template="Initialize {{ repo_name }} from template",
+        ...     labels=["infrastructure", "automated"],
+        ...     reviewers=["alice", "bob"]
+        ... )
     """
     title_template: str = "Initialize {{ repo_name }} from template"
     body_template: str = """
@@ -76,13 +113,110 @@ class PRConfig(BaseModel):
 class TemplateInput(BaseModel):
     """Represents the input data required for template automation.
 
+    This class defines the structure of input data needed to create a new
+    repository from a template. It includes project metadata, template-specific
+    settings, and optional configurations for repository ownership and
+    initialization.
+
     Attributes:
-        project_name (str): The name of the project to create.
-        template_settings (Dict[str, Any]): A dictionary of settings for the template.
-        trigger_init_workflow (bool): Whether to trigger the initialization workflow.
-        owning_team (Optional[str]): The name of the team that will own the repository.
+        project_name (str): Name of the project/repository to create. This will
+            be used as the repository name and in various template substitutions.
+        template_settings (Dict[str, Any]): Dictionary of template-specific
+            settings that will be written to the configuration file in the new
+            repository. The structure depends on the template being used.
+        trigger_init_workflow (bool): Whether to automatically trigger the
+            initialization workflow after repository creation. Defaults to False.
+        owning_team (Optional[str]): The GitHub team slug that should be granted
+            admin access to the new repository. If None, no team access will be
+            configured.
+
+    Example:
+        >>> input_data = TemplateInput(
+        ...     project_name="my-new-service",
+        ...     template_settings={
+        ...         "environment": "production",
+        ...         "region": "us-west-2"
+        ...     },
+        ...     trigger_init_workflow=True,
+        ...     owning_team="platform-team"
+        ... )
     """
     project_name: str
     template_settings: Dict[str, Any]
     trigger_init_workflow: bool = False
     owning_team: Optional[str] = None
+
+class TemplateConfig(BaseModel):
+    """Configuration for a template repository.
+    
+    This class defines the configuration structure for template repositories,
+    including pull request settings and workflow configurations.
+
+    Attributes:
+        pr (PRConfig): Pull request configuration settings including title template,
+            body template, branch settings, labels, reviewers and assignees.
+        workflows (List[WorkflowConfig]): List of workflow configurations to apply
+            to the repository. Each workflow config specifies name, template path,
+            output path and variables.
+
+    Example:
+        ```python
+        config = TemplateConfig(
+            pr=PRConfig(
+                title_template="Initialize {{ repo_name }}",
+                base_branch="main",
+                labels=["automated"]
+            ),
+            workflows=[
+                WorkflowConfig(
+                    name="CI",
+                    template_path="workflows/ci.yml",
+                    output_path=".github/workflows/ci.yml"
+                )
+            ]
+        )
+        ```
+    """
+    pr: PRConfig = Field(
+        default_factory=lambda: PRConfig(
+            title_template="Initialize {{ repo_name }} from template",
+            body_template="""
+            Automated pull request for initializing {{ repo_name }} from template {{ template_repo }}.
+            
+            This PR was created by the Template Automation system.
+            {% if workflow_files %}
+            ## Added Workflows
+            {% for workflow in workflow_files %}
+            - {{ workflow }}
+            {% endfor %}
+            {% endif %}
+            """,
+            base_branch="main",
+            branch_prefix="init",
+            labels=["automated"],
+            reviewers=[],
+            assignees=[]
+        )
+    )
+    workflows: List[WorkflowConfig] = Field(default_factory=list)
+
+    class Config:
+        """Pydantic model configuration.
+        
+        This inner class defines metadata for the TemplateConfig model,
+        including example configurations and schema information.
+        """
+        json_schema_extra = {
+            "example": {
+                "pr": {
+                    "title_template": "Initialize {{ repo_name }} from template",
+                    "body_template": "Template PR body...",
+                    "base_branch": "main",
+                    "branch_prefix": "init",
+                    "labels": ["automated"],
+                    "reviewers": [],
+                    "assignees": []
+                },
+                "workflows": []
+            }
+        }

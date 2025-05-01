@@ -19,6 +19,7 @@ mkdir -p docs/source/_static
 mkdir -p docs/build
 
 # Generate documentation
+export SPHINX_BUILD=1
 cd docs
 sphinx-build -b html source build
 

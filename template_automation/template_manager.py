@@ -2,9 +2,10 @@
 
 import os
 import json
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from jinja2 import Environment, FileSystemLoader, Template
-from .models import WorkflowConfig, PRConfig
+from pydantic import ValidationError
+from .models import WorkflowConfig, PRConfig, TemplateConfig
 
 class TemplateManager:
     """Handles the management and rendering of templates for workflows and pull requests.
@@ -15,10 +16,10 @@ class TemplateManager:
     Attributes:
         env (Environment): The Jinja2 environment for rendering templates.
         template_repo_name (str): The name of the template repository.
-        config (Dict): The loaded template configuration.
+        config (TemplateConfig): The loaded template configuration.
     """
 
-    def __init__(self, template_root: str = None, template_repo_name: str = None):
+    def __init__(self, template_root: Optional[str] = None, template_repo_name: Optional[str] = None):
         """Initialize the TemplateManager with optional template root and repository name.
 
         Args:
@@ -37,48 +38,28 @@ class TemplateManager:
         self.template_repo_name = template_repo_name
         self.config = self._load_template_config()
 
-    def _load_template_config(self) -> Dict:
+    def _load_template_config(self) -> TemplateConfig:
         """Load the template configuration from a .template-config.json file.
 
         Returns:
-            Dict: The loaded configuration, merged with default settings.
+            TemplateConfig: The loaded configuration with validation.
+            
+        Raises:
+            ValidationError: If the configuration is invalid.
         """
-        # Default configuration
-        default_config = {
-            "pr": {
-                "title_template": "Initialize {{ repo_name }} from template",
-                "body_template": """
-                Automated pull request for initializing {{ repo_name }} from template {{ template_repo }}.
-                
-                This PR was created by the Template Automation system.
-                {% if workflow_files %}
-                ## Added Workflows
-                {% for workflow in workflow_files %}
-                - {{ workflow }}
-                {% endfor %}
-                {% endif %}
-                """,
-                "base_branch": "main",
-                "branch_prefix": "init",
-                "labels": ["automated"],
-                "reviewers": [],
-                "assignees": []
-            },
-            "workflows": []  # List of workflow configurations to apply
-        }
-        
-        # Try to load template-specific configuration
         try:
             config_path = os.path.join(os.getcwd(), ".template-config.json")
             if os.path.exists(config_path):
                 with open(config_path, "r") as f:
                     template_config = json.load(f)
-                    # Merge with defaults, keeping template-specific values
-                    default_config.update(template_config)
+                    return TemplateConfig(**template_config)
+            return TemplateConfig()  # Use defaults if no config file exists
+        except ValidationError as e:
+            print(f"Warning: Template config validation failed: {str(e)}")
+            return TemplateConfig()  # Use defaults on validation error
         except Exception as e:
             print(f"Warning: Could not load template config: {str(e)}")
-        
-        return default_config
+            return TemplateConfig()  # Use defaults on any other error
 
     def render_workflow(self, workflow: WorkflowConfig) -> str:
         """Render a GitHub Actions workflow template.
@@ -92,7 +73,7 @@ class TemplateManager:
         template = self.env.get_template(workflow.template_path)
         return template.render(**workflow.variables)
 
-    def render_pr_details(self, repo_name: str, workflow_files: List[str] = None) -> Dict[str, Any]:
+    def render_pr_details(self, repo_name: str, workflow_files: Optional[List[str]] = None) -> Dict[str, Any]:
         """Generate pull request details by rendering templates and configurations.
 
         Args:
@@ -102,7 +83,7 @@ class TemplateManager:
         Returns:
             Dict[str, Any]: A dictionary containing the rendered pull request details.
         """
-        pr_config = self.config["pr"]
+        pr_config = self.config.pr
         variables = {
             "repo_name": repo_name,
             "template_repo": self.template_repo_name,
@@ -110,13 +91,13 @@ class TemplateManager:
         }
 
         return {
-            "title": self.env.from_string(pr_config["title_template"]).render(**variables),
-            "body": self.env.from_string(pr_config["body_template"]).render(**variables),
-            "base_branch": pr_config["base_branch"],
-            "branch_name": f"{pr_config['branch_prefix']}-{repo_name}",
-            "labels": pr_config["labels"],
-            "reviewers": pr_config["reviewers"],
-            "assignees": pr_config["assignees"]
+            "title": self.env.from_string(pr_config.title_template).render(**variables),
+            "body": self.env.from_string(pr_config.body_template).render(**variables),
+            "base_branch": pr_config.base_branch,
+            "branch_name": f"{pr_config.branch_prefix}-{repo_name}",
+            "labels": pr_config.labels,
+            "reviewers": pr_config.reviewers,
+            "assignees": pr_config.assignees
         }
 
     def get_workflow_configs(self) -> List[WorkflowConfig]:
@@ -125,4 +106,4 @@ class TemplateManager:
         Returns:
             List[WorkflowConfig]: A list of workflow configurations.
         """
-        return [WorkflowConfig(**w) for w in self.config.get("workflows", [])]
+        return self.config.workflows
