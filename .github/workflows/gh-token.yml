@@ -12,7 +12,7 @@ permissions:
 jobs:
   refresh-token:
     name: Refresh GitHub Token
-    if: ${{ github.server_url != 'https://github.com' }}
+    if: github.server_url != 'https://github.com'
     uses: CSVD/centralized-actions/.github/workflows/upload-github-token.yml@main
     with:
       aws_region: 'us-gov-west-1'
