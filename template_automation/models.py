@@ -4,17 +4,21 @@ from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 
 class GitHubConfig(BaseModel):
-    """Encapsulates configuration settings for interacting with the GitHub API.
+    """Configuration settings for GitHub API interactions.
+    
+    This class defines the settings needed to interact with the GitHub API,
+    including the API URL, authentication token, organization name, and template
+    repository information.
 
     Attributes:
-        api_base_url (str): The base URL for GitHub API requests.
-        token (str): The authentication token for GitHub.
-        org_name (str): The name of the GitHub organization.
-        commit_author_name (str): The name to use for commit authorship.
-        commit_author_email (str): The email to use for commit authorship.
-        source_version (Optional[str]): The version, tag, or SHA of the template to use.
-        template_repo_name (Optional[str]): The name of the template repository.
-        config_file_name (str): The name of the configuration file to write.
+        api_base_url (str): The base URL for all GitHub API requests. For example,
+            "https://api.github.com" for public GitHub.
+        token (str): Personal access token for GitHub API authentication.
+        org_name (str): Organization name where repositories will be created.
+        template_repo_name (Optional[str]): Name of the template repository to use
+            as a base. Default is None.
+        source_version (Optional[str]): Git reference (branch, tag, commit) to use
+            from the template repository. Default is None.
     """
     api_base_url: str
     token: str
@@ -26,33 +30,30 @@ class GitHubConfig(BaseModel):
     config_file_name: str = "config.json"
 
 class WorkflowConfig(BaseModel):
-    """Defines the configuration for a GitHub Actions workflow.
-
-    This class represents a single GitHub Actions workflow configuration,
-    including its template source and destination paths, along with any
+    """Configuration for GitHub Actions workflow files.
+    
+    This class defines the structure for configuring GitHub Actions workflow files,
+    including the workflow name, template source and destination paths, and any 
     variables needed for template rendering.
 
     Attributes:
-        name (str): Descriptive name of the workflow, used for logging and
-            identification purposes.
-        template_path (str): Path to the Jinja2 template file containing the
-            workflow definition. This path should be relative to the template
-            root directory.
-        output_path (str): Destination path where the rendered workflow file
-            will be saved in the new repository. This path should be relative
-            to the repository root.
-        variables (Dict[str, Any]): Dictionary of variables to use when
-            rendering the workflow template. These values will be passed to
-            the Jinja2 template engine.
+        name (str): Name of the workflow, used for identification and logging.
+        template_path (str): Path to the workflow template file, relative to the
+            template root directory.
+        output_path (str): Destination path where the rendered workflow file should
+            be written in the target repository.
+        variables (Dict[str, Any]): Variables to use when rendering the workflow
+            template with Jinja2. Keys are variable names and values can be any
+            type that Jinja2 can handle. Defaults to an empty dict.
 
     Example:
         >>> workflow = WorkflowConfig(
-        ...     name="CI/CD Pipeline",
+        ...     name="CI/CD",
         ...     template_path="workflows/ci.yml.j2",
         ...     output_path=".github/workflows/ci.yml",
         ...     variables={
-        ...         "python_version": "3.9",
-        ...         "test_commands": ["pytest", "flake8"]
+        ...         "runner": "ubuntu-latest",
+        ...         "python_version": "3.9"
         ...     }
         ... )
     """
@@ -137,8 +138,7 @@ class TemplateInput(BaseModel):
         ...         "environment": "production",
         ...         "region": "us-west-2"
         ...     },
-        ...     trigger_init_workflow=True,
-        ...     owning_team="platform-team"
+        ...     trigger_init_workflow=True
         ... )
     """
     project_name: str
@@ -147,35 +147,30 @@ class TemplateInput(BaseModel):
     owning_team: Optional[str] = None
 
 class TemplateConfig(BaseModel):
-    """Configuration for a template repository.
+    """Configuration for template repository automation.
     
-    This class defines the configuration structure for template repositories,
-    including pull request settings and workflow configurations.
+    This class defines the overall configuration for how a template repository
+    should be processed, including pull request settings and workflow automations.
 
     Attributes:
-        pr (PRConfig): Pull request configuration settings including title template,
-            body template, branch settings, labels, reviewers and assignees.
-        workflows (List[WorkflowConfig]): List of workflow configurations to apply
-            to the repository. Each workflow config specifies name, template path,
-            output path and variables.
+        pr (PRConfig): Configuration settings for pull request creation, including
+            templates for title and body, branch names, and PR metadata.
+        workflows (List[WorkflowConfig]): List of workflow configurations that should be
+            applied to repositories created from this template.
 
     Example:
-        ```python
-        config = TemplateConfig(
-            pr=PRConfig(
-                title_template="Initialize {{ repo_name }}",
-                base_branch="main",
-                labels=["automated"]
-            ),
-            workflows=[
-                WorkflowConfig(
-                    name="CI",
-                    template_path="workflows/ci.yml",
-                    output_path=".github/workflows/ci.yml"
-                )
-            ]
-        )
-        ```
+        >>> config = TemplateConfig(
+        ...     pr=PRConfig(
+        ...         title_template="Initialize {{ repo_name }}",
+        ...         reviewers=["team-lead"]
+        ...     ),
+        ...     workflows=[
+        ...         WorkflowConfig(
+        ...             template_path="workflows/ci.yml",
+        ...             variables={"runner": "ubuntu-latest"}
+        ...         )
+        ...     ]
+        ... )
     """
     pr: PRConfig = Field(
         default_factory=lambda: PRConfig(
