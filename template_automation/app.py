@@ -30,19 +30,15 @@ import shutil
 import logging
 import base64
 import time
-import requests
-import json
-import urllib3
-from urllib.parse import urlparse
 from datetime import datetime
 import traceback
 import uuid
-
-import boto3
+from github import Github, GithubException
+from github.GithubObject import NotSet
+from github.InputGitTreeElement import InputGitTreeElement
 from botocore.exceptions import ClientError
-
-# Disable SSL verification warnings
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+from .models import TemplateInput, GitHubConfig, WorkflowConfig
+from .template_manager import TemplateManager
 
 # Initialize the logger
 logger = logging.getLogger()
@@ -55,972 +51,382 @@ DEFAULT_TOPICS = os.environ.get("TEMPLATE_TOPICS", "infrastructure").split(",")
 PARAM_STORE_PREFIX = os.environ.get("PARAM_STORE_PREFIX", "/template-automation")
 
 class GitHubClient:
-    """A class to interact with GitHub API without relying on external Git binaries.
-    
-    This class encapsulates all GitHub API operations for managing repositories,
-    branches, files, commits and other Git operations using only the requests library.
+    """An object-oriented interface for GitHub repository management and automation.
+
+    This class provides a high-level interface to GitHub's API using PyGithub,
+    enabling repository creation, content management, branch operations, and more.
+    It's specifically designed for template-based repository automation.
+
+    Attributes:
+        github (Github): The PyGithub client instance.
+        org (Organization): The GitHub organization being operated on.
+        commit_author_name (str): The name to use for commit authorship.
+        commit_author_email (str): The email to use for commit authorship.
+        source_version (str, optional): The version, tag, or SHA of the template.
+        template_repo_name (str, optional): The name of the template repository.
+        config_file_name (str): The name of the configuration file to write.
     """
-    
-    def __init__(self, api_base_url, token, org_name, commit_author_name, commit_author_email, source_version=None, template_repo_name=None, config_file_name="config.json"):
-        """Initialize the GitHub client
-        
+
+    def __init__(self, config: GitHubConfig):
+        """Initialize the GitHub client with configuration.
+
         Args:
-            api_base_url (str): Base URL for the GitHub API
-            token (str): GitHub access token
-            org_name (str): GitHub organization name
-            commit_author_name (str): Name of the commit author
-            commit_author_email (str): Email of the commit author
-            source_version (str, optional): Version to use from template repo
-            template_repo_name (str, optional): Name of the template repository
-            config_file_name (str, optional): Name of the config file to write
+            config (GitHubConfig): A Pydantic model containing validated GitHub configuration.
+                This includes the base URL, token, organization name, and other settings.
         """
-        self.api_base_url = api_base_url
-        self.token = token
-        self.org_name = org_name
-        self.commit_author_name = commit_author_name
-        self.commit_author_email = commit_author_email
-        self.source_version = source_version
-        self.template_repo_name = template_repo_name
-        self.config_file_name = config_file_name
-        self.headers = self._create_headers()
-        
-    def _create_headers(self):
-        """Create headers for GitHub API requests
-        
-        Returns:
-            dict: Headers for GitHub API requests
-        """
-        return {
-            "Authorization": f"token {self.token}",
-            "Accept": "application/vnd.github.v3+json",
-            "Content-Type": "application/json"
-        }
-        
-    def get_repository(self, repo_name, create=False, owning_team=None):
-        """Get or create a repository
-        
+        self.github = Github(
+            base_url=config.api_base_url,
+            login_or_token=config.token
+        )
+        self.org = self.github.get_organization(config.org_name)
+        self.commit_author_name = config.commit_author_name
+        self.commit_author_email = config.commit_author_email
+        self.source_version = config.source_version
+        self.template_repo_name = config.template_repo_name
+        self.config_file_name = config.config_file_name
+
+    def get_repository(self, repo_name: str, create: bool = False, owning_team: str = None):
+        """Get or create a GitHub repository with optional team permissions.
+
+        This method attempts to retrieve a repository by name. If it doesn't exist and
+        create=True, it creates a new repository. It also handles team permissions
+        if an owning team is specified.
+
         Args:
-            repo_name (str): Name of the repository
-            create (bool, optional): Create the repository if it doesn't exist
-            owning_team (str, optional): Name of the GitHub team to give admin access
-            
+            repo_name (str): The name of the repository to retrieve or create.
+            create (bool, optional): Whether to create the repository if it doesn't exist.
+            owning_team (str, optional): The name of the GitHub team to grant admin access.
+
         Returns:
-            dict: Repository information from GitHub API
+            github.Repository.Repository: The repository object.
+
+        Raises:
+            GithubException: If repository operations fail.
         """
-        get_url = f"{self.api_base_url}/repos/{self.org_name}/{repo_name}"
         try:
-            response = requests.get(get_url, headers=self.headers, verify=False)
-            if response.status_code == 200:
-                # If owning team is specified and repo exists, ensure the team has admin access
+            try:
+                repo = self.org.get_repo(repo_name)
+                logger.info(f"Found existing repository: {repo_name}")
                 if owning_team:
                     self.set_team_permission(repo_name, owning_team, "admin")
-                return response.json()
-            elif response.status_code == 404 and create:
-                logger.info(f"Creating repository {repo_name}")
-                create_url = f"{self.api_base_url}/orgs/{self.org_name}/repos"
-                repo_data = {
-                    "name": repo_name,
-                    "private": True,
-                    "auto_init": True,  # Initialize with README
-                    "default_branch": "main",
-                    "allow_squash_merge": True,
-                    "allow_merge_commit": True,
-                    "allow_rebase_merge": True,
-                    "delete_branch_on_merge": True,
-                    "enable_branch_protection": False  # Disable branch protection
-                }
-                create_response = requests.post(
-                    create_url, 
-                    headers=self.headers, 
-                    json=repo_data,
-                    verify=False
-                )
-                
-                if create_response.status_code in (201, 200):
+                return repo
+            except GithubException as e:
+                if e.status == 404 and create:
+                    logger.info(f"Creating repository {repo_name}")
+                    repo = self.org.create_repo(
+                        name=repo_name,
+                        private=True,
+                        auto_init=True,
+                        allow_squash_merge=True,
+                        allow_merge_commit=True,
+                        allow_rebase_merge=True,
+                        delete_branch_on_merge=True
+                    )
+                    
                     # Wait for repository initialization
-                    repo = create_response.json()
                     max_retries = 100
                     retry_delay = 1
                     for _ in range(max_retries):
                         try:
-                            # Try to get the main branch's reference
-                            self.get_reference_sha(repo_name, "heads/main")
-                            # If owning team is specified, give them admin access
-                            if owning_team:
-                                self.set_team_permission(repo_name, owning_team, "admin")
-                            return repo
-                        except Exception:
-                            # If reference doesn't exist yet, wait and retry
+                            repo.get_branch("main")
+                            break
+                        except GithubException:
                             time.sleep(retry_delay)
-                            continue
-                    # If we got here, initialization failed
-                    raise Exception(f"Repository {repo_name} initialization timed out")
-                else:
-                    error_message = f"Failed to create repository: {create_response.status_code} - {create_response.text}"
-                    logger.error(error_message)
-                    raise Exception(error_message)
-            else:
-                error_message = f"Repository {repo_name} not found and create=False"
-                logger.error(error_message)
-                raise Exception(error_message)
-        except requests.exceptions.RequestException as e:
-            error_message = f"Error accessing GitHub API: {str(e)}"
-            logger.error(error_message)
-            raise Exception(error_message)
-    
-    def get_default_branch(self, repo_name):
-        """Get the default branch of a repository
-    
-        Args:
-            repo_name (str): Name of the repository
-        
-        Returns:
-            str: Default branch name
-        """
-        repo_api_url = f"{self.api_base_url}/repos/{self.org_name}/{repo_name}"
-        response = requests.get(repo_api_url, headers=self.headers, verify=False)
-        
-        if response.status_code == 200:
-            repo_info = response.json()
-            return repo_info["default_branch"]
-        else:
-            error_message = f"Failed to get default branch for {repo_name}: {response.status_code} - {response.text}"
-            logger.error(error_message)
-            raise Exception(error_message)
-
-    def get_reference_sha(self, repo_name, ref):
-        """Get the SHA for a reference (branch, tag, etc)
-    
-        Args:
-            repo_name (str): Name of the repository
-            ref (str): Reference name (e.g., 'heads/main')
-    
-        Returns:
-            str: SHA of the reference
-        """
-        api_url = f"{self.api_base_url}/repos/{self.org_name}/{repo_name}/git/refs/{ref}"
-        response = requests.get(api_url, headers=self.headers, verify=False)
-        
-        if response.status_code == 200:
-            ref_info = response.json()
-            return ref_info["object"]["sha"]
-        else:
-            error_message = f"Failed to get reference {ref} for {repo_name}: {response.status_code} - {response.text}"
-            logger.error(error_message)
-            raise Exception(error_message)
-
-    def get_commit(self, repo_name, commit_sha):
-        """Get a commit by SHA
-    
-        Args:
-            repo_name (str): Name of the repository
-            commit_sha (str): Commit SHA
-    
-        Returns:
-            dict: Commit information
-        """
-        api_url = f"{self.api_base_url}/repos/{self.org_name}/{repo_name}/git/commits/{commit_sha}"
-        response = requests.get(api_url, headers=self.headers, verify=False)
-        
-        if response.status_code == 200:
-            return response.json()
-        else:
-            error_message = f"Failed to get commit {commit_sha} for {repo_name}: {response.status_code} - {response.text}"
-            logger.error(error_message)
-            raise Exception(error_message)
-    
-    def get_tree(self, repo_name, tree_sha, recursive=False):
-        """Get a tree by SHA
-    
-        Args:
-            repo_name (str): Name of the repository
-            tree_sha (str): Tree SHA
-            recursive (bool): Whether to get the tree recursively
-    
-        Returns:
-            dict: Tree information
-        """
-        api_url = f"{self.api_base_url}/repos/{self.org_name}/{repo_name}/git/trees/{tree_sha}"
-        if recursive:
-            api_url += "?recursive=1"
-            
-        response = requests.get(api_url, headers=self.headers, verify=False)
-        
-        if response.status_code == 200:
-            return response.json()
-        else:
-            error_message = f"Failed to get tree {tree_sha} for {repo_name}: {response.status_code} - {response.text}"
-            logger.error(error_message)
-            raise Exception(error_message)
-    
-    def download_repository_files(self, repo_name, tree, target_dir):
-        """Download all files from a repository tree to a local directory
-    
-        Args:
-            repo_name (str): Name of the repository
-            tree (dict): Tree information from get_tree()
-            target_dir (str): Directory to download files to
-        """
-        # Ensure target directory exists even if there are no files
-        os.makedirs(target_dir, exist_ok=True)
-        
-        for item in tree.get("tree", []):
-            if item["type"] == "blob":
-                # Get the blob contents
-                blob_url = f"{self.api_base_url}/repos/{self.org_name}/{repo_name}/git/blobs/{item['sha']}"
-                blob_response = requests.get(blob_url, headers=self.headers, verify=False)
-                
-                if blob_response.status_code == 200:
-                    blob_data = blob_response.json()
-                    content = None
-                    
-                    # Ensure the target directory exists
-                    file_path = os.path.join(target_dir, item["path"])
-                    dir_path = os.path.dirname(file_path)
-                    os.makedirs(dir_path, exist_ok=True)
-                    
-                    # GitHub API returns base64 encoded content
-                    if blob_data.get("encoding") == "base64":
-                        content = base64.b64decode(blob_data.get("content", ""))
                     else:
-                        # Handle non-base64 content if needed
-                        logger.warning(f"Unexpected encoding for blob {item['sha']}: {blob_data.get('encoding')}")
-                        
-                    if content is not None:
-                        logger.info(f"Writing file to {file_path}")
-                        with open(file_path, "wb") as f:
-                            f.write(content)
-    
-    def create_blob(self, repo_name, content):
-        """Create a blob in the repository
-    
-        Args:
-            repo_name (str): Name of the repository
-            content (bytes): Content of the blob
-    
-        Returns:
-            str: SHA of the created blob
-        """
-        api_url = f"{self.api_base_url}/repos/{self.org_name}/{repo_name}/git/blobs"
-        
-        # Base64 encode the content
-        content_b64 = base64.b64encode(content).decode('utf-8')
-        
-        data = {
-            "content": content_b64,
-            "encoding": "base64"
-        }
-        
-        response = requests.post(api_url, headers=self.headers, json=data, verify=False)
-        
-        if response.status_code in (201, 200):
-            return response.json()["sha"]
-        else:
-            error_message = f"Failed to create blob for {repo_name}: {response.status_code} - {response.text}"
-            logger.error(error_message)
-            raise Exception(error_message)
-    
-    def create_tree(self, repo_name, tree_items, base_tree_sha=None):
-        """Create a tree in the repository
-    
-        Args:
-            repo_name (str): Name of the repository
-            tree_items (list): List of tree items (path, mode, type, sha)
-            base_tree_sha (str): SHA of the base tree (optional)
-    
-        Returns:
-            str: SHA of the created tree
-        """
-        api_url = f"{self.api_base_url}/repos/{self.org_name}/{repo_name}/git/trees"
-        
-        data = {
-            "tree": tree_items
-        }
-        
-        if base_tree_sha:
-            data["base_tree"] = base_tree_sha
-        
-        response = requests.post(api_url, headers=self.headers, json=data, verify=False)
-        
-        if response.status_code in (201, 200):
-            return response.json()["sha"]
-        else:
-            error_message = f"Failed to create tree for {repo_name}: {response.status_code} - {response.text}"
-            logger.error(error_message)
-            raise Exception(error_message)
-    
-    def create_commit(self, repo_name, message, tree_sha, parent_shas):
-        """Create a commit in the repository
-    
-        Args:
-            repo_name (str): Name of the repository
-            message (str): Commit message
-            tree_sha (str): SHA of the tree
-            parent_shas (list): List of parent commit SHAs
-    
-        Returns:
-            str: SHA of the created commit
-        """
-        api_url = f"{self.api_base_url}/repos/{self.org_name}/{repo_name}/git/commits"
-        
-        # Add committer/author information
-        current_time = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-        author_info = {
-            "name": self.commit_author_name,
-            "email": self.commit_author_email,
-            "date": current_time
-        }
-        
-        data = {
-            "message": message,
-            "tree": tree_sha,
-            "parents": parent_shas,
-            "author": author_info,
-            "committer": author_info
-        }
-        
-        response = requests.post(api_url, headers=self.headers, json=data, verify=False)
-        
-        if response.status_code in (201, 200):
-            return response.json()["sha"]
-        else:
-            error_message = f"Failed to create commit for {repo_name}: {response.status_code} - {response.text}"
-            logger.error(error_message)
-            raise Exception(error_message)
-    
-    def update_reference(self, repo_name, ref, sha):
-        """Update a reference in the repository
-    
-        Args:
-            repo_name (str): Name of the repository
-            ref (str): Reference name (e.g., 'heads/main')
-            sha (str): SHA to update the reference to
-        """
-        api_url = f"{self.api_base_url}/repos/{self.org_name}/{repo_name}/git/refs/{ref}"
-        
-        data = {
-            "sha": sha,
-            "force": True
-        }
-        
-        response = requests.patch(api_url, headers=self.headers, json=data, verify=False)
-        
-        if response.status_code not in (200, 201):
-            error_message = f"Failed to update reference {ref} for {repo_name}: {response.status_code} - {response.text}"
-            logger.error(error_message)
-            raise Exception(error_message)
-    
-    def create_reference(self, repo_name, ref, sha):
-        """Create a reference in the repository
-    
-        Args:
-            repo_name (str): Name of the repository
-            ref (str): Full reference name (e.g., 'refs/heads/main')
-            sha (str): SHA to create the reference at
-        """
-        api_url = f"{self.api_base_url}/repos/{self.org_name}/{repo_name}/git/refs"
-        
-        data = {
-            "ref": ref,
-            "sha": sha
-        }
-        
-        response = requests.post(api_url, headers=self.headers, json=data, verify=False)
-        
-        if response.status_code not in (201, 200):
-            error_message = f"Failed to create reference {ref} for {repo_name}: {response.status_code} - {response.text}"
-            logger.error(error_message)
-            raise Exception(error_message)
-            
-    def update_repository_topics(self, repo_name, topics):
-        """Update the topics for a repository
-    
-        Args:
-            repo_name (str): Name of the repository
-            topics (list): List of topic strings to set
-        """
-        api_url = f"{self.api_base_url}/repos/{self.org_name}/{repo_name}/topics"
-        
-        # GitHub requires a special header for the topics API
-        headers = self.headers.copy()
-        headers["Accept"] = "application/vnd.github.mercy-preview+json"
-        
-        data = {
-            "names": topics
-        }
-        
-        response = requests.put(api_url, headers=headers, json=data, verify=False)
-        
-        if response.status_code not in (200, 201):
-            error_message = f"Failed to update topics for {repo_name}: {response.status_code} - {response.text}"
-            logger.error(error_message)
-            raise Exception(error_message)
-    
-    def clone_repository_contents(self, source_repo, target_dir, branch=None):
-        """Clone a repository's contents to a local directory using GitHub API
-
-        Args:
-            source_repo (str): Name of the source repository
-            target_dir (str): Target directory to download files to
-            branch (str, optional): Branch to clone from. If None, uses default branch.
-
-        Returns:
-            str: The branch name that was cloned
-        """
-        # Create the target directory if it doesn't exist
-        os.makedirs(target_dir, exist_ok=True)
-        
-        try:
-            if branch:
-                target_branch = branch
-                # Try to get the branch's reference directly
-                tree_sha = self.get_reference_sha(source_repo, f"heads/{target_branch}")
-            else:
-                # If no branch specified, use default branch
-                target_branch = self.get_default_branch(source_repo)
-                tree_sha = self.get_reference_sha(source_repo, f"heads/{target_branch}")
-        except Exception as e:
-            logger.warning(f"Failed to get reference for {branch or 'default branch'}: {str(e)}")
-            target_branch = branch or "main"
-            # If we can't get the reference, the branch might not exist yet
-            tree = {"tree": []}
-            self.download_repository_files(source_repo, tree, target_dir)
-            return target_branch
-
-        # Get the full tree for the branch
-        logger.info(f"Getting file tree from {source_repo} for branch {target_branch}")
-        tree = self.get_tree(source_repo, tree_sha, recursive=True)
-
-        # Download all files
-        logger.info(f"Downloading all files from {source_repo} using ref: heads/{target_branch}")
-        self.download_repository_files(source_repo, tree, target_dir)
-
-        return target_branch
-    
-    def commit_repository_contents(self, repo_name, work_dir, commit_message, branch=None):
-        """Commit all files from a directory to a repository
-
-        Args:
-            repo_name (str): Name of the repository
-            work_dir (str): Directory containing the files to commit
-            commit_message (str): Commit message
-            branch (str, optional): Branch to commit to. If None, uses default branch.
-
-        Returns:
-            str: The branch name that was committed to
-        """
-        # First, get the current state of the target repository
-        try:
-            target_branch = branch or self.get_default_branch(repo_name)
-        except Exception:
-            # If we can't get the default branch, it might be a new repo
-            target_branch = branch or "main"
-        
-        # Upload all files to the repository
-        tree_items = []
-        
-        # Add all files from the work directory to the repository
-        for root, _, files in os.walk(work_dir):
-            for file in files:
-                file_path = os.path.join(root, file)
-                repo_path = os.path.relpath(file_path, work_dir)
-                
-                # Skip .git directory if it exists
-                if ".git" in repo_path.split(os.path.sep):
-                    continue
+                        raise Exception(f"Repository {repo_name} initialization timed out")
                     
-                # Read file content
-                with open(file_path, "rb") as f:
-                    file_content = f.read()
-                    
-                # Create blob for the file
-                blob_sha = self.create_blob(repo_name, file_content)
-                
-                # Add to tree items
-                tree_items.append({
-                    "path": repo_path,
-                    "mode": "100644",  # Regular file
-                    "type": "blob",
-                    "sha": blob_sha
-                })
-        
-        # Try to get the latest commit SHA from the base branch
-        base_branch = "main"  # Always use main as base when creating new branches
-        try:
-            base_commit_sha = self.get_reference_sha(repo_name, f"heads/{base_branch}")
-            base_commit = self.get_commit(repo_name, base_commit_sha)
-            base_tree_sha = base_commit["tree"]["sha"]
-        except Exception:
-            # If we can't get the reference, assume it's a new repo with no commits
-            base_tree_sha = None
+                    if owning_team:
+                        self.set_team_permission(repo_name, owning_team, "admin")
+                    return repo
+                raise
+        except GithubException as e:
+            error_message = f"GitHub API error: {str(e)}"
+            logger.error(error_message)
+            raise
 
-        # Create a new tree with all the files
-        new_tree_sha = self.create_tree(repo_name, tree_items, base_tree_sha)
+    def get_default_branch(self, repo_name: str) -> str:
+        """Get the default branch name of a repository.
+
+        Args:
+            repo_name (str): Name of the repository.
+
+        Returns:
+            str: Default branch name (usually 'main' or 'master').
+        """
+        repo = self.org.get_repo(repo_name)
+        return repo.default_branch
+
+    def create_branch(self, repo_name: str, branch_name: str, from_ref: str = "main") -> None:
+        """Create a new branch in the repository.
+
+        Args:
+            repo_name (str): Name of the repository.
+            branch_name (str): Name of the branch to create.
+            from_ref (str, optional): Reference to create branch from. Defaults to "main".
+
+        Raises:
+            GithubException: If branch creation fails.
+        """
+        repo = self.org.get_repo(repo_name)
+        source = repo.get_branch(from_ref)
         
-        # Create a commit with the new tree
-        if base_tree_sha:
-            # If we have a base tree, include the parent commit
-            new_commit_sha = self.create_commit(
-                repo_name, 
-                commit_message,
-                new_tree_sha,
-                [base_commit_sha]
-            )
-        else:
-            # If it's a new repo, create the first commit
-            new_commit_sha = self.create_commit(
-                repo_name,
-                commit_message,
-                new_tree_sha,
-                []
-            )
-        
-        # Update or create the reference to point to the new commit
         try:
-            # Try to update existing branch
-            self.update_reference(
-                repo_name,
-                f"heads/{target_branch}",
-                new_commit_sha
+            repo.create_git_ref(
+                ref=f"refs/heads/{branch_name}",
+                sha=source.commit.sha
             )
-        except Exception:
-            # If the branch doesn't exist, create it
-            try:
-                self.create_reference(
-                    repo_name,
-                    f"refs/heads/{target_branch}",
-                    new_commit_sha
+            logger.info(f"Created branch {branch_name} in {repo_name}")
+        except GithubException as e:
+            error_message = f"Failed to create branch {branch_name}: {str(e)}"
+            logger.error(error_message)
+            raise
+
+    def create_commit(self, repo_name: str, branch: str, commit_message: str, changes: list) -> None:
+        """Create a commit with the specified changes.
+
+        Args:
+            repo_name (str): Name of the repository.
+            branch (str): Branch name to commit to.
+            commit_message (str): Commit message.
+            changes (list): List of dictionaries with 'path' and 'content' keys.
+
+        Raises:
+            GithubException: If commit creation fails.
+        """
+        repo = self.org.get_repo(repo_name)
+        
+        try:
+            # Get the branch reference
+            ref = repo.get_git_ref(f"heads/{branch}")
+            branch_sha = ref.object.sha
+            base_tree = repo.get_git_tree(branch_sha)
+
+            # Create tree elements
+            tree_elements = []
+            for change in changes:
+                element = InputGitTreeElement(
+                    path=change['path'],
+                    mode='100644',
+                    type='blob',
+                    content=change['content']
                 )
-            except Exception as e:
-                # If we still can't create the branch, something is wrong
-                error_message = f"Failed to create or update branch {target_branch} for {repo_name}: {str(e)}"
-                logger.error(error_message)
-                raise Exception(error_message)
-        
-        return target_branch
+                tree_elements.append(element)
 
-    def _get_secret_value(self):
-        """Retrieve GitHub token from AWS Secrets Manager"""
-        try:
-            session = boto3.session.Session()
-            client = session.client(
-                service_name='secretsmanager',
-                region_name=os.environ.get('AWS_REGION', 'us-east-1')
+            # Create tree
+            tree = repo.create_git_tree(tree_elements, base_tree)
+
+            # Create commit
+            parent = repo.get_git_commit(branch_sha)
+            commit = repo.create_git_commit(
+                message=commit_message,
+                tree=tree,
+                parents=[parent],
+                author={"name": self.commit_author_name, "email": self.commit_author_email},
+                committer={"name": self.commit_author_name, "email": self.commit_author_email}
             )
-            
-            response = client.get_secret_value(SecretId=GITHUB_TOKEN_SECRET_NAME)
-            if 'SecretString' in response:
-                return response['SecretString']
-            raise ValueError("Secret value not found in response")
-            
-        except ClientError as e:
-            logger.error(f"Failed to retrieve secret: {str(e)}")
-            raise Exception("Failed to retrieve GitHub token from Secrets Manager") from e
 
-    def trigger_workflow(self, repo_name, workflow_id="init-repo.yml", ref="main", inputs=None):
-        """Trigger a GitHub Actions workflow in the repository
-        
-        Args:
-            repo_name (str): Name of the repository
-            workflow_id (str): The ID or filename of the workflow to trigger
-            ref (str): The git reference to run the workflow on
-            inputs (dict, optional): Input parameters for the workflow
+            # Update branch reference
+            ref.edit(commit.sha, force=True)
             
-        Returns:
-            dict: Response from the workflow dispatch API
-        """
-        api_url = f"{self.api_base_url}/repos/{self.org_name}/{repo_name}/actions/workflows/{workflow_id}/dispatches"
-        
-        data = {
-            "ref": ref,
-        }
-        if inputs:
-            data["inputs"] = inputs
-            
-        response = requests.post(api_url, headers=self.headers, json=data, verify=False)
-        
-        if response.status_code == 204:  # GitHub returns 204 No Content for successful workflow dispatch
-            logger.info(f"Successfully triggered workflow {workflow_id} in {repo_name}")
-            return {"status": "success"}
-        else:
-            error_message = f"Failed to trigger workflow {workflow_id} in {repo_name}: {response.status_code} - {response.text}"
+            logger.info(f"Created commit in {repo_name}/{branch}: {commit_message}")
+        except GithubException as e:
+            error_message = f"Failed to create commit: {str(e)}"
             logger.error(error_message)
-            raise Exception(error_message)
+            raise
 
-    def set_team_permission(self, repo_name, team_name, permission):
-        """Set a team's permission on a repository
-        
-        Args:
-            repo_name (str): Name of the repository
-            team_name (str): Name of the team
-            permission (str): Permission level (pull, push, admin)
-        """
-        # First get the team ID from the team name
-        team_url = f"{self.api_base_url}/orgs/{self.org_name}/teams/{team_name}"
-        try:
-            team_response = requests.get(team_url, headers=self.headers, verify=False)
-            if team_response.status_code != 200:
-                error_message = f"Failed to get team {team_name}: {team_response.status_code} - {team_response.text}"
-                logger.error(error_message)
-                raise Exception(error_message)
-                
-            team_id = team_response.json()["id"]
-            
-            # Add team to repository with specified permission
-            perm_url = f"{self.api_base_url}/orgs/{self.org_name}/teams/{team_name}/repos/{self.org_name}/{repo_name}"
-            data = {
-                "permission": permission
-            }
-            
-            response = requests.put(perm_url, headers=self.headers, json=data, verify=False)
-            
-            if response.status_code not in (200, 204):
-                error_message = f"Failed to set team permission: {response.status_code} - {response.text}"
-                logger.error(error_message)
-                raise Exception(error_message)
-                
-            logger.info(f"Successfully set {permission} permission for team {team_name} on {repo_name}")
-            
-        except requests.exceptions.RequestException as e:
-            error_message = f"Error setting team permission: {str(e)}"
-            logger.error(error_message)
-            raise Exception(error_message)
+    def clone_repository_contents(self, source_repo: str, target_repo: str, 
+                               source_ref: str = None, target_branch: str = "main") -> None:
+        """Clone contents from one repository to another using PyGithub.
 
-    def create_branch(self, repo_name, branch_name, from_ref="main"):
-        """Create a new branch in the repository
-        
         Args:
-            repo_name (str): Name of the repository
-            branch_name (str): Name of the branch to create
-            from_ref (str): Reference to create branch from (default: main)
-            
-        Returns:
-            dict: Branch creation response from GitHub API
+            source_repo (str): Name of the source repository.
+            target_repo (str): Name of the target repository.
+            source_ref (str, optional): Source ref (branch/tag/SHA). Defaults to default branch.
+            target_branch (str, optional): Target branch name. Defaults to "main".
+
+        Raises:
+            GithubException: If repository operations fail.
         """
         try:
-            # Get the SHA of the reference we're branching from
-            base_sha = self.get_reference_sha(repo_name, f"heads/{from_ref}")
-            
-            # Create the new branch reference
-            create_ref_url = f"{self.api_base_url}/repos/{self.org_name}/{repo_name}/git/refs"
-            ref_data = {
-                "ref": f"refs/heads/{branch_name}",
-                "sha": base_sha
-            }
-            
-            response = requests.post(
-                create_ref_url,
-                headers=self.headers,
-                json=ref_data,
-                verify=False
-            )
-            
-            if response.status_code == 201:
-                logger.info(f"Created branch {branch_name} in {repo_name}")
-                return response.json()
+            source = self.org.get_repo(source_repo)
+            target = self.org.get_repo(target_repo)
+
+            # If no source_ref specified, use the default branch
+            if not source_ref:
+                source_ref = source.default_branch
+
+            # Get the tree from source repository
+            if source_ref.startswith('refs/'):
+                ref = source.get_git_ref(source_ref.replace('refs/', ''))
+                tree_sha = ref.object.sha
             else:
-                error_message = f"Failed to create branch: {response.status_code} - {response.text}"
-                logger.error(error_message)
-                raise Exception(error_message)
-                
-        except Exception as e:
-            error_message = f"Error creating branch: {str(e)}"
-            logger.error(error_message)
-            raise Exception(error_message)
+                # Try as a branch first
+                try:
+                    branch = source.get_branch(source_ref)
+                    tree_sha = branch.commit.sha
+                except GithubException:
+                    # If not a branch, try as a commit SHA
+                    tree_sha = source_ref
 
-    def create_pull_request(self, repo_name, title, head_branch, base_branch="main", body=None):
-        """Create a pull request
-        
-        Args:
-            repo_name (str): Name of the repository
-            title (str): Title of the pull request
-            head_branch (str): Name of the branch containing changes
-            base_branch (str): Name of the branch to merge into
-            body (str, optional): Description of the pull request
+            # Get the full tree
+            tree = source.get_git_tree(tree_sha, recursive=True)
+
+            # Download and create all blobs
+            elements = []
+            for entry in tree.tree:
+                if entry.type == 'blob':
+                    blob = source.get_git_blob(entry.sha)
+                    content = base64.b64decode(blob.content).decode('utf-8')
+                    elements.append({
+                        'path': entry.path,
+                        'content': content
+                    })
+
+            # Create commit with all files
+            if elements:
+                self.create_commit(
+                    target_repo,
+                    target_branch,
+                    f"Clone contents from {source_repo}",
+                    elements
+                )
             
-        Returns:
-            dict: Pull request creation response from GitHub API
+            logger.info(f"Successfully cloned contents from {source_repo} to {target_repo}")
+        except GithubException as e:
+            error_message = f"Failed to clone repository contents: {str(e)}"
+            logger.error(error_message)
+            raise
+
+    def commit_repository_contents(self, repo_name: str, branch: str, contents: dict) -> None:
+        """Commit multiple file contents to a repository.
+
+        Args:
+            repo_name (str): Name of the repository.
+            branch (str): Branch to commit to.
+            contents (dict): Dictionary mapping file paths to their content.
+
+        Raises:
+            GithubException: If commit operations fail.
         """
         try:
-            create_pr_url = f"{self.api_base_url}/repos/{self.org_name}/{repo_name}/pulls"
+            # Format changes for create_commit method
+            changes = [
+                {'path': path, 'content': content}
+                for path, content in contents.items()
+            ]
             
-            pr_data = {
-                "title": title,
-                "head": head_branch,
-                "base": base_branch,
-                "body": body or "Created by Template Automation"
-            }
-            
-            response = requests.post(
-                create_pr_url,
-                headers=self.headers,
-                json=pr_data,
-                verify=False
+            self.create_commit(
+                repo_name=repo_name,
+                branch=branch,
+                commit_message="Update repository contents",
+                changes=changes
             )
             
-            if response.status_code == 201:
-                logger.info(f"Created pull request in {repo_name}: {title}")
-                return response.json()
-            else:
-                error_message = f"Failed to create pull request: {response.status_code} - {response.text}"
-                logger.error(error_message)
-                raise Exception(error_message)
-                
-        except Exception as e:
-            error_message = f"Error creating pull request: {str(e)}"
+            logger.info(f"Successfully committed contents to {repo_name}/{branch}")
+        except GithubException as e:
+            error_message = f"Failed to commit repository contents: {str(e)}"
             logger.error(error_message)
-            raise Exception(error_message)
+            raise
 
-def generate_repository_name(project_name):
-    """Generate repository name based on prefix or project name
-    
-    Args:
-        project_name (str): Name of the project
-        
-    Returns:
-        str: Generated repository name
-    """
-    prefix = os.environ.get("REPO_NAME_PREFIX")
-    if prefix:
-        # Generate a short random string (first 8 chars of UUID)
-        random_suffix = str(uuid.uuid4())[:8]
-        return f"{prefix}-{random_suffix}"
-    return project_name
+    def update_repository_topics(self, repo_name: str, topics: list) -> None:
+        """Update the topics of a repository.
 
-def get_parameter(name, default=None, decrypt=False):
-    """Get parameter from SSM Parameter Store or environment variable
-    
-    Args:
-        name (str): Parameter name
-        default (str, optional): Default value if not found
-        decrypt (bool, optional): Whether to decrypt the value
-        
-    Returns:
-        str: Parameter value
-    """
-    # Try Parameter Store first with configured prefix
-    ssm = boto3.client('ssm')
-    param_name = f"{PARAM_STORE_PREFIX}/{name}"
-    try:
-        response = ssm.get_parameter(Name=param_name, WithDecryption=decrypt)
-        return response['Parameter']['Value']
-    except ssm.exceptions.ParameterNotFound:
-        # Fall back to environment variable
-        return os.environ.get(name, default)
-    except Exception as e:
-        logger.warning(f"Error getting parameter {name}: {str(e)}")
-        return os.environ.get(name, default)
+        Args:
+            repo_name (str): Name of the repository.
+            topics (list): List of topics to set.
 
-def operate_github(new_repo_name, template_settings, trigger_init_workflow=False, owning_team=None):
-    """Write template settings to config file and create/update repository using GitHub API
-
-    This implementation uses only the requests library and does not rely on git CLI
-    or any external binaries.
-
-    Args:
-        new_repo_name (str): Name of the new GitHub repo
-        template_settings (json): Input JSON data with all parameter values
-        trigger_init_workflow (bool): Whether to trigger the init-repo workflow after setup
-        owning_team (str, optional): Name of the GitHub team to give admin access
-
-    Returns:
-        None
-    """
-    logger.info("Starting GitHub repository operation")
-    
-    # Generate the actual repository name
-    actual_repo_name = generate_repository_name(new_repo_name)
-    logger.info(f"Using repository name: {actual_repo_name}")
-    
-    token = github_token()
-    logger.info("Successfully retrieved GitHub token from Secrets Manager")
-
-    # Get all configuration from Parameter Store or environment variables
-    github_api = get_parameter("GITHUB_API")  # Required
-    if not github_api:
-        raise ValueError("GITHUB_API must be configured in Parameter Store or environment")
-    
-    org_name = get_parameter("GITHUB_ORG_NAME")  # Required
-    if not org_name:
-        raise ValueError("GITHUB_ORG_NAME must be configured in Parameter Store or environment")
-        
-    commit_author_email = get_parameter("GITHUB_COMMIT_AUTHOR_EMAIL", "automation@example.com")
-    commit_author_name = get_parameter("GITHUB_COMMIT_AUTHOR_NAME", "Template Automation")
-    source_version = get_parameter("TEMPLATE_SOURCE_VERSION")
-    template_repo_name = get_parameter("TEMPLATE_REPO_NAME")  # Required
-    if not template_repo_name:
-        raise ValueError("TEMPLATE_REPO_NAME must be configured in Parameter Store or environment")
-        
-    config_file_name = get_parameter("TEMPLATE_CONFIG_FILE", DEFAULT_CONFIG_FILE)
-
-    # Create work directory if it doesn't exist
-    work_dir = f"/tmp/{actual_repo_name}"
-    if os.path.exists(work_dir):
-        shutil.rmtree(work_dir, ignore_errors=False, onerror=remove_readonly)
-    os.makedirs(work_dir, exist_ok=True)
-    
-    # Initialize GitHub client with all required parameters
-    github = GitHubClient(
-        github_api,
-        token,
-        org_name,
-        commit_author_name,
-        commit_author_email,
-        source_version,
-        template_repo_name,
-        config_file_name
-    )
-    
-    # Get info about original repo and determine correct commit SHA
-    logger.info(f"Fetching original repository information: {template_repo_name}")
-    orig_repo = github.get_repository(template_repo_name)
-    
-    # Determine source commit SHA based on source_version
-    if source_version:
+        Raises:
+            GithubException: If the operation fails.
+        """
         try:
-            # Try as a tag/release first
-            source_commit_sha = github.get_reference_sha(template_repo_name, f"tags/{source_version}")
-        except Exception:
-            try:
-                # Try as direct SHA
-                source_commit = github.get_commit(template_repo_name, source_version)
-                source_commit_sha = source_version
-            except Exception:
-                # If both fail, log error and use default branch
-                logger.warning(f"Could not find version {source_version}, using default branch")
-                default_branch = orig_repo["default_branch"]
-                source_commit_sha = github.get_reference_sha(template_repo_name, f"heads/{default_branch}")
-    else:
-        # No version specified, use default branch
-        default_branch = orig_repo["default_branch"]
-        source_commit_sha = github.get_reference_sha(template_repo_name, f"heads/{default_branch}")
-    
-    logger.info(f"Using source commit SHA: {source_commit_sha}")
-    
-    # Get or create the new repository
-    logger.info(f"Getting or creating repository: {actual_repo_name}")
-    new_repo = github.get_repository(actual_repo_name, create=True, owning_team=owning_team)
-    
-    # Clone the original repository contents from specific commit
-    tree = github.get_tree(template_repo_name, source_commit_sha, recursive=True)
-    github.download_repository_files(template_repo_name, tree, work_dir)
-    
-    # Write template settings to config file
-    output_file_path = os.path.join(work_dir, config_file_name)
-    logger.info(f"Writing template settings to {output_file_path}")
-    with open(output_file_path, "w") as file:
-        json.dump(template_settings, file, indent=2)
-    
-    # Write version information to .source-version file if source_version is specified
-    if source_version:
-        version_file_path = os.path.join(work_dir, ".source-version")
-        logger.info(f"Writing version information to {version_file_path}")
-        with open(version_file_path, "w") as file:
-            file.write(source_version)
-    
-    # Create init-cluster branch and commit changes there
-    branch_name = "init-cluster"
-    commit_message = "Add template configuration by automation"
-    
-    # Create the init-cluster branch from main
-    github.create_branch(actual_repo_name, branch_name, from_ref="main")
-    
-    # Commit all files to the init-cluster branch
-    github.commit_repository_contents(actual_repo_name, work_dir, commit_message, branch=branch_name)
-    
-    # Create pull request to merge init-cluster into main
-    pr_title = "Initial cluster configuration"
-    pr_body = f"Automated pull request for initializing cluster configuration.\n\nProject: {actual_repo_name}"
-    github.create_pull_request(actual_repo_name, pr_title, branch_name, base_branch="main", body=pr_body)
-    
-    # Add configurable topics to the repository
-    topics = DEFAULT_TOPICS
-    
-    github.update_repository_topics(actual_repo_name, topics)
-    
-    logger.info(f"Successfully updated {actual_repo_name} repository and created PR from {branch_name} to main")
+            repo = self.org.get_repo(repo_name)
+            repo.replace_topics(topics)
+            logger.info(f"Updated topics for {repo_name}: {topics}")
+        except GithubException as e:
+            error_message = f"Failed to update repository topics: {str(e)}"
+            logger.error(error_message)
+            raise
 
-    # Trigger init workflow if requested
-    if trigger_init_workflow:
+    def set_team_permission(self, repo_name: str, team_name: str, permission: str) -> None:
+        """Set a team's permission on a repository.
+
+        Args:
+            repo_name (str): Name of the repository.
+            team_name (str): Name of the team.
+            permission (str): Permission level ('pull', 'push', 'admin', 'maintain', 'triage').
+
+        Raises:
+            GithubException: If the operation fails.
+        """
         try:
-            github.trigger_workflow(actual_repo_name)
-            logger.info("Successfully triggered init-repo workflow")
-        except Exception as e:
-            logger.warning(f"Failed to trigger init-repo workflow: {str(e)}")
+            repo = self.org.get_repo(repo_name)
+            team = self.org.get_team_by_slug(team_name)
+            team.update_team_repository(repo, permission)
+            logger.info(f"Set {team_name} permission on {repo_name} to {permission}")
+        except GithubException as e:
+            error_message = f"Failed to set team permission: {str(e)}"
+            logger.error(error_message)
+            raise
 
-def github_token():
-    """Retrieve GitHub access token from AWS Secrets Manager
-    
-    Returns:
-        str: The GitHub access token.
-    """
-    secrets = boto3.client("secretsmanager")
-    try:
-        secret = secrets.get_secret_value(SecretId=GITHUB_TOKEN_SECRET_NAME)
-        return secret["SecretString"]
-    except ClientError as e:
-        logger.error(f"Error occurred when retrieving GitHub token from Secrets Manager: {str(e)}")
-        raise
+    def create_pull_request(self, repo_name: str, title: str, body: str,
+                          head_branch: str, base_branch: str = "main") -> None:
+        """Create a pull request in a repository.
 
-def remove_readonly(func, path, _):
-    """Clear the readonly bit and reattempt the removal.
-    This function is used by `shutil.rmtree` function.
-    """
-    os.chmod(path, stat.S_IWRITE)
-    func(path)
+        Args:
+            repo_name (str): Name of the repository.
+            title (str): Title of the pull request.
+            body (str): Description/body of the pull request.
+            head_branch (str): Branch containing the changes.
+            base_branch (str, optional): Branch to merge into. Defaults to "main".
 
-# pylint: disable=unused-argument
-def lambda_handler(event, context):
-    """Main Lambda handler function
+        Returns:
+            github.PullRequest.PullRequest: The created pull request object.
 
-    Args:
-        event (dict): Dict containing the Lambda function event data
-        context (dict): Lambda runtime context
+        Raises:
+            GithubException: If pull request creation fails.
+        """
+        try:
+            repo = self.org.get_repo(repo_name)
+            pr = repo.create_pull(
+                title=title,
+                body=body,
+                head=head_branch,
+                base=base_branch,
+                maintainer_can_modify=True
+            )
+            logger.info(f"Created PR #{pr.number} in {repo_name}: {title}")
+            return pr
+        except GithubException as e:
+            error_message = f"Failed to create pull request: {str(e)}"
+            logger.error(error_message)
+            raise
 
-    Returns:
-        dict: Dict containing status message
-    """
-    logger.info(f"Lambda function invoked with RequestId: {context.aws_request_id}")
-    logger.info(f"Remaining time in milliseconds: {context.get_remaining_time_in_millis()}")
-    logger.info(f"Received event: {json.dumps(event, indent=2)}")
+    def trigger_workflow(self, repo_name: str, workflow_id: str, ref: str,
+                        inputs: dict = None) -> None:
+        """Trigger a GitHub Actions workflow.
 
-    input_data = event.get("body")
-    if isinstance(input_data, str):
-        input_data = json.loads(input_data)
-    logger.info(f"Extracted input data from event body: {json.dumps(input_data, indent=2)}")
+        Args:
+            repo_name (str): Name of the repository.
+            workflow_id (str): ID or filename of the workflow.
+            ref (str): Git reference to run the workflow on.
+            inputs (dict, optional): Input parameters for the workflow.
 
-    project_name = input_data.get("project_name")
-    template_settings = input_data.get("template_settings")
-    trigger_init_workflow = input_data.get("trigger_init_workflow", False)
-    owning_team = input_data.get("owning_team")  # Get owning team from input
-    
-    logger.info(f"Project name: {project_name}")
-    logger.info(f"Template settings to be applied: {json.dumps(template_settings, indent=2)}")
-    logger.info(f"Trigger init workflow: {trigger_init_workflow}")
-    logger.info(f"Owning team: {owning_team}")
-
-    if not project_name:
-        logger.error("Missing project name in input")
-        return {
-            "statusCode": 400,
-            "body": json.dumps({"error": "Missing project name"})
-        }
-
-    try:
-        logger.info(f"Starting GitHub operations for project: {project_name}")
-        operate_github(project_name, template_settings, trigger_init_workflow, owning_team)
-        logger.info("GitHub operations completed successfully")
-    except Exception as e:  # pylint: disable=broad-exception-caught
-        logger.error(f"Error in operate_github: {str(e)}")
-        logger.error(f"Stack trace: {traceback.format_exc()}")
-        return {
-            "statusCode": 400, 
-            "body": json.dumps({"error": str(e)})
-        }
-
-    logger.info("Lambda execution completed successfully")
-    return {
-        "statusCode": 200,
-        "headers": {"Access-Control-Allow-Origin": "*"},
-        "body": json.dumps({"result": "Success"})
-    }
+        Raises:
+            GithubException: If workflow dispatch fails.
+        """
+        try:
+            repo = self.org.get_repo(repo_name)
+            workflow = repo.get_workflow(workflow_id)
+            
+            # Convert inputs to GitHub's expected format
+            workflow_inputs = inputs if inputs is not None else {}
+            
+            workflow.create_dispatch(
+                ref=ref,
+                inputs=workflow_inputs
+            )
+            logger.info(f"Triggered workflow {workflow_id} in {repo_name} on {ref}")
+        except GithubException as e:
+            error_message = f"Failed to trigger workflow: {str(e)}"
+            logger.error(error_message)
+            raise

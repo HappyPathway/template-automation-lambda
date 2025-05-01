@@ -1,0 +1,42 @@
+name: "Ansible Playbook"
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'ansible/**'
+      - '.github/workflows/ansible.yml'
+
+jobs:
+  ansible:
+    runs-on: {{ runner | default('ubuntu-latest') }}
+    permissions:
+      id-token: write
+      contents: read
+      
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: {{ python_version | default('3.9') }}
+          
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: {{ aws_role }}
+          aws-region: {{ aws_region | default('us-west-2') }}
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ansible
+          if [ -f ansible/requirements.txt ]; then
+            pip install -r ansible/requirements.txt
+          fi
+          
+      - name: Run Ansible Playbook
+        run: |
+          cd ansible
+          ansible-playbook {{ playbook_path | default('generate_hcl_files.yml') }}

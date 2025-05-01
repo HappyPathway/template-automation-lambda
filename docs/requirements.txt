@@ -1,0 +1,6 @@
+sphinx
+sphinx_rtd_theme
+sphinx-autodoc-typehints
+pydantic~=2.6
+boto3>=1.38.6
+requests

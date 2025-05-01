@@ -1,0 +1,1 @@
+in terraform-aws-template-automation, can we setup IAM access rules for the lambda function? 
