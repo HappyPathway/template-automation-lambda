@@ -21,7 +21,12 @@ autodoc_default_options = {
     'undoc-members': True,
     'show-inheritance': True,
     'special-members': '__init__',
+    'imported-members': False,  # Don't document imported members
 }
+
+# Don't document imported members in app module
+autodoc_mock_imports = ['github']
+autodoc_member_order = 'bysource'
 
 # Napoleon settings for Google-style docstrings
 napoleon_google_docstring = True
