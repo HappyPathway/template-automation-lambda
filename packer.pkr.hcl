@@ -34,7 +34,12 @@ build {
 
   provisioner "file" {
     source      = "./template_automation/"
-    destination = "/var/task"
+    destination = "/var/task/template_automation/"
+  }
+
+  provisioner "file" {
+    source      = "./app.py"
+    destination = "/var/task/app.py"
   }
 
   provisioner "shell" {
