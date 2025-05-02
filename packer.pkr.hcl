@@ -42,6 +42,11 @@ build {
     destination = "/var/task/app.py"
   }
 
+  provisioner "file" {
+    source      = "./requirements.txt"
+    destination = "/var/task/requirements.txt"
+  }
+
   provisioner "shell" {
     inline = [
       "ls -la /var/task",  # Debug: List contents
