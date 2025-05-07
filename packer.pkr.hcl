@@ -32,25 +32,19 @@ build {
     "source.docker.lambda"
   ]
 
+  # Copy the entire project directory for proper installation
   provisioner "file" {
-    source      = "./template_automation/"
-    destination = "/var/task/template_automation/"
-  }
-
-  provisioner "file" {
-    source      = "./app.py"
-    destination = "/var/task/app.py"
-  }
-
-  provisioner "file" {
-    source      = "./requirements.txt"
-    destination = "/var/task/requirements.txt"
+    source      = "./"
+    destination = "/tmp/"
   }
 
   provisioner "shell" {
     inline = [
-      "ls -la /var/task",  # Debug: List contents
-      "pip3 install -r /var/task/requirements.txt -t /var/task"
+      "ls -la /tmp",  # Debug: List contents of tmp directory
+      "pip3 install -r /tmp/requirements.txt -t /var/task",
+      "pip3 install /tmp -t /var/task",  # Install the package itself
+      "cp /tmp/app.py /var/task/",  # Copy the entry point file
+      "ls -la /var/task"  # Debug: List contents of task directory
     ]
   }
 

@@ -4,8 +4,11 @@ FROM public.ecr.aws/lambda/python:3.11
 COPY requirements.txt /tmp/
 RUN pip install --no-cache-dir -r /tmp/requirements.txt -t ${LAMBDA_TASK_ROOT}
 
-# Copy the template_automation package
-COPY template_automation/ ${LAMBDA_TASK_ROOT}/template_automation/
+# Copy all code files for package installation
+COPY . /tmp/app/
+
+# Install the package in development mode to make it available to Python
+RUN pip install -e /tmp/app -t ${LAMBDA_TASK_ROOT}
 
 # Copy the root app.py file (this is essential for AWS Lambda to find the handler)
 COPY app.py ${LAMBDA_TASK_ROOT}/
