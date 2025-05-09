@@ -40,11 +40,30 @@ build {
 
   provisioner "shell" {
     inline = [
-      "ls -la /tmp",  # Debug: List contents of tmp directory
-      "pip3 install -r /tmp/requirements.txt -t /var/task",
-      "pip3 install /tmp -t /var/task",  # Install the package itself
-      "cp /tmp/app.py /var/task/",  # Copy the entry point file
-      "ls -la /var/task"  # Debug: List contents of task directory
+      "echo '=== Debug: Listing directory contents ==='",
+      "ls -la /tmp",
+      "echo '=== Debug: Python version ==='",
+      "python3 --version",
+      "echo '=== Debug: Pip version ==='",
+      "pip3 --version",
+      
+      "echo '=== Installing requirements.txt dependencies ==='",
+      "pip3 install --no-cache-dir -r /tmp/requirements.txt -t /var/task -v",
+      
+      "echo '=== Installing pydantic explicitly ==='",
+      "pip3 install --no-cache-dir 'pydantic~=2.6' -t /var/task -v",
+      
+      "echo '=== Installing package in development mode ==='",
+      "pip3 install --no-cache-dir -e /tmp -t /var/task -v",
+      
+      "echo '=== Copying app.py to task root ==='",
+      "cp /tmp/app.py /var/task/",
+      
+      "echo '=== Listing installed Python packages ==='",
+      "pip3 list",
+      
+      "echo '=== Verifying task directory contents ==='",
+      "ls -la /var/task"
     ]
   }
 
