@@ -59,6 +59,9 @@ build {
       "echo '=== Copying app.py to task root ==='",
       "cp /tmp/app.py /var/task/",
       
+      "echo '=== Explicitly copying template_automation package directory ==='",
+      "cp -r /tmp/template_automation /var/task/",
+      
       "echo '=== Listing installed Python packages ==='",
       "pip3 list",
       
