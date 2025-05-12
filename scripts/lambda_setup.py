@@ -52,13 +52,10 @@ def verify_dependencies():
     run_command("python3 -c 'import sys; print(sys.path)'")
     
     # Check key dependencies
-    dependencies = [
-        "jinja2", 
-        "github",    # PyGithub
-        "pydantic", 
-        "boto3",
-        "template_automation"
-    ]
+    dependencies = []
+    with open(f"{TMP_DIR}/requirements.txt") as f:
+        dependencies = [line.strip().split("=")[0] for line in f if line.strip() and not line.startswith("#")]
+   
     
     for dep in dependencies:
         cmd = f"python3 -c 'import {dep}; print(f\"{dep} installed successfully\")'  || echo '{dep} not installed correctly'"
