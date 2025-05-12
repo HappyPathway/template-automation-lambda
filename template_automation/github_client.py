@@ -89,7 +89,10 @@ class GitHubClient:
         self.client = Github(
             base_url=api_base_url, 
             login_or_token=token, 
-            verify=verify_ssl
+            verify=verify_ssl,
+            # Disable hostname verification to support custom GitHub Enterprise domains
+            per_page=100,  # Optimize API call efficiency
+            verify_hostname=False  # Allow custom GitHub Enterprise domains
         )
         self.org = self.client.get_organization(org_name)
         logger.info(f"Initialized GitHub client for org: {org_name} (SSL verify: {verify_ssl})")
