@@ -74,6 +74,8 @@ DEFAULT_CONFIG_FILE = os.environ.get("TEMPLATE_CONFIG_FILE", "config.json")
 DEFAULT_TOPICS = os.environ.get("TEMPLATE_TOPICS", "infrastructure").split(",")
 PARAM_STORE_PREFIX = os.environ.get("PARAM_STORE_PREFIX", "/template-automation")
 TEMPLATE_SOURCE_VERSION: Optional[str] = os.environ.get("TEMPLATE_SOURCE_VERSION")
+# Add SSL verification environment variable with default to True (secure)
+VERIFY_SSL = os.environ.get("VERIFY_SSL", "true").lower() != "false"
 
 # Keep imports and logging setup from here
 # The GitHubClient class has been moved to github_client.py
@@ -107,7 +109,7 @@ def lambda_handler(event: dict, context) -> dict:
     Raises:
         ValueError: If input validation fails
         ClientError: On AWS Secrets Manager errors
-        GithubException: On GitHub API errors
+        GithubException: On GitHub API errors.
 
     Example:
         >>> event = {
@@ -121,15 +123,15 @@ def lambda_handler(event: dict, context) -> dict:
         ... }
         >>> result = lambda_handler(event, None)
         >>> print(result["repository_url"])
-        'https://github.com/myorg/my-new-service'
+         'https://github.com/myorg/my-new-service'
     """
     try:
         logger.info(f"Processing template request: {event}")
-        
+
         # Parse and validate input
         template_input = TemplateInput(**event)
         logger.info(f"Validated input for project: {template_input.project_name}")
-        
+
         # Get GitHub configuration from environment/parameter store
         github_config = GitHubConfig(
             api_base_url=os.environ["GITHUB_API"],
@@ -139,27 +141,28 @@ def lambda_handler(event: dict, context) -> dict:
             token=get_github_token(),
             template_repo_name=os.environ["TEMPLATE_REPO_NAME"],
             config_file_name=DEFAULT_CONFIG_FILE,
-            source_version=TEMPLATE_SOURCE_VERSION
+            source_version=TEMPLATE_SOURCE_VERSION,
         )
-        
+
         # Initialize clients
         github = GitHubClient(
             api_base_url=github_config.api_base_url,
             token=github_config.token,
             org_name=github_config.org_name,
             commit_author_name=github_config.commit_author_name,
-            commit_author_email=github_config.commit_author_email
+            commit_author_email=github_config.commit_author_email,
+            verify_ssl=VERIFY_SSL  # Pass SSL verification setting
         )
         template_mgr = TemplateManager(github_config)
-        
+
         # Create repository from template
         repo_name = template_input.project_name
         repo = github.get_repository(repo_name, create=True, owning_team=template_input.owning_team)
-        
+
         # Create feature branch for template configuration
         feature_branch = f"template-config-{int(time.time())}"
         github.create_branch(repo_name, feature_branch)
-        
+
         # Write template configuration
         github.write_file(
             repo=repo,
@@ -168,10 +171,10 @@ def lambda_handler(event: dict, context) -> dict:
             branch=feature_branch,
             commit_message=f"Initialize {DEFAULT_CONFIG_FILE} from template"
         )
-        
+
         # Set repository topics
         github.update_repository_topics(repo_name, DEFAULT_TOPICS)
-        
+
         # Create pull request with template configuration
         config = template_mgr.get_pr_config()
         pr_title = config.title_template.format(repo_name=repo_name)
@@ -179,7 +182,7 @@ def lambda_handler(event: dict, context) -> dict:
             repo_name=repo_name,
             template_repo=github_config.template_repo_name
         )
-        
+
         pr = github.create_pull_request(
             repo_name=repo_name,
             title=pr_title,
@@ -187,7 +190,7 @@ def lambda_handler(event: dict, context) -> dict:
             head_branch=feature_branch,
             base_branch=github.get_default_branch(repo_name)
         )
-        
+
         # Optionally trigger initialization workflow
         if template_input.trigger_init_workflow:
             github.trigger_workflow(
@@ -195,30 +198,32 @@ def lambda_handler(event: dict, context) -> dict:
                 workflow_id="initialize.yml",
                 ref=feature_branch
             )
-        
+
         return {
             "repository_url": repo.html_url,
             "pull_request_url": pr.html_url if pr else None
         }
-        
     except Exception as e:
         logger.error(f"Failed to process template request: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.debug(traceback.format_exc())
         raise
+
 
 def get_github_token() -> str:
     """Get GitHub token from AWS Secrets Manager.
-    
+
     Returns:
-        str: GitHub API token
-        
+         str: GitHub API token
+
     Raises:
-        ClientError: If secret retrieval fails
+        ClientError: If unable to retrieve the secret
     """
     try:
         client = boto3.client('secretsmanager')
         response = client.get_secret_value(SecretId=GITHUB_TOKEN_SECRET_NAME)
-        return response['SecretString']
+        secret = response['SecretString']
+        logger.info("Successfully retrieved GitHub token from Secrets Manager")
+        return secret
     except ClientError as e:
         logger.error(f"Failed to get GitHub token: {str(e)}")
         raise

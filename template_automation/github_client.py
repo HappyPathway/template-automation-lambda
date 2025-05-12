@@ -36,6 +36,7 @@ class GitHubClient:
         commit_author_email (str): Email to use for automated commits
         client (Github): PyGithub client instance
         org (Organization): GitHub organization instance
+        verify_ssl (bool): Whether to verify SSL certificates
     
     Example:
         ```python
@@ -61,7 +62,8 @@ class GitHubClient:
         token: str,
         org_name: str,
         commit_author_name: str = "Template Automation",
-        commit_author_email: str = "automation@example.com"
+        commit_author_email: str = "automation@example.com",
+        verify_ssl: bool = True
     ):
         """Initialize a new GitHub client.
         
@@ -71,6 +73,7 @@ class GitHubClient:
             org_name: GitHub organization name
             commit_author_name: Name to use for automated commits
             commit_author_email: Email to use for automated commits
+            verify_ssl: Whether to verify SSL certificates
             
         Raises:
             GithubException: If authentication fails or org doesn't exist
@@ -80,11 +83,16 @@ class GitHubClient:
         self.org_name = org_name
         self.commit_author_name = commit_author_name
         self.commit_author_email = commit_author_email
+        self.verify_ssl = verify_ssl
         
         # Initialize client and get org
-        self.client = Github(base_url=api_base_url, login_or_token=token)
+        self.client = Github(
+            base_url=api_base_url, 
+            login_or_token=token, 
+            verify=verify_ssl
+        )
         self.org = self.client.get_organization(org_name)
-        logger.info(f"Initialized GitHub client for org: {org_name}")
+        logger.info(f"Initialized GitHub client for org: {org_name} (SSL verify: {verify_ssl})")
 
     def create_repository_from_template(
         self,
