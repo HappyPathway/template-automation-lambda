@@ -25,7 +25,7 @@ if os.path.exists('/var/task/.env'):
                             sys.path.insert(0, path)
 
 # Fallback check for critical dependencies
-for module in ['pydantic', 'jinja2']:
+for module in ['pydantic', 'jinja2', 'github']:
     try:
         importlib.import_module(module)
     except ImportError:

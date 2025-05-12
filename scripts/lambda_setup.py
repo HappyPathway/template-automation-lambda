@@ -45,14 +45,14 @@ def install_dependencies():
     
     # Explicitly install critical dependencies
     print("=== Explicitly installing critical dependencies ===")
-    run_command(f"pip3 install --no-cache-dir pydantic jinja2 -t {LAMBDA_TASK_ROOT}")
+    run_command(f"pip3 install --no-cache-dir pydantic jinja2 PyGithub -t {LAMBDA_TASK_ROOT}")
     
     # Create a .pth file to ensure the Lambda runtime can find the packages
     with open(f"{LAMBDA_TASK_ROOT}/lambda_path.pth", "w") as f:
         f.write(f"{LAMBDA_TASK_ROOT}\n")
     
     print("=== Installing package in development mode ===")
-    run_command(f"pip3 install --no-cache-dir -e {TMP_DIR} -t {LAMBDA_TASK_ROOT}")
+    run_command(f"pip3 install --no-cache-dir -e {TMP_DIR} -t {LAMBDA_TASK_ROOT} -v")
 
 def verify_dependencies():
     """Verify that key dependencies are installed correctly"""
@@ -63,7 +63,7 @@ def verify_dependencies():
     run_command("python3 -c 'import sys; print(sys.path)'")
     
     # Check key dependencies
-    dependencies = ['pydantic', 'jinja2']  # Add critical dependencies here
+    dependencies = ['pydantic', 'jinja2', 'github']  # Add critical dependencies here
     with open(f"{TMP_DIR}/requirements.txt") as f:
         for line in f:
             line = line.strip()
@@ -113,7 +113,7 @@ def setup_lambda_environment():
     run_command(f"ls -la {LAMBDA_TASK_ROOT}")
     run_command(f"ls -la {LAMBDA_TASK_ROOT}/template_automation")
     
-    # Final check - try to import jinja2 and pydantic from the Lambda environment
+    # Final check - try to import critical modules from the Lambda environment
     print("=== Testing key imports from Lambda environment ===")
     test_import = """
 import sys
@@ -128,6 +128,11 @@ try:
     print("jinja2 successfully imported:", jinja2.__file__)
 except ImportError as e:
     print("Error importing jinja2:", str(e))
+try:
+    import github
+    print("github successfully imported:", github.__file__)
+except ImportError as e:
+    print("Error importing github:", str(e))
 """
     with open(f"{LAMBDA_TASK_ROOT}/test_imports.py", "w") as f:
         f.write(test_import)
