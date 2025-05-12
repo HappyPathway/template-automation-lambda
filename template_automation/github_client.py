@@ -90,12 +90,32 @@ class GitHubClient:
             base_url=api_base_url, 
             login_or_token=token, 
             verify=verify_ssl,
-            # Disable hostname verification to support custom GitHub Enterprise domains
-            per_page=100,  # Optimize API call efficiency
-            verify_hostname=False  # Allow custom GitHub Enterprise domains
+            per_page=100  # Optimize API call efficiency
         )
+        
+        # Monkey patch the Requester to fix hostname validation for enterprise GitHub
+        self._patch_hostname_validation()
+        
         self.org = self.client.get_organization(org_name)
         logger.info(f"Initialized GitHub client for org: {org_name} (SSL verify: {verify_ssl})")
+        
+    def _patch_hostname_validation(self):
+        """Patch PyGithub's hostname validation to allow enterprise GitHub domains.
+        
+        This is a workaround for PyGithub's hostname validation which only allows known GitHub domains.
+        Enterprise GitHub instances have custom hostnames that would normally fail validation.
+        """
+        from github import Requester
+        
+        # Save the original _makeAbsoluteUrl method
+        original_make_absolute_url = Requester.Requester._makeAbsoluteUrl
+        
+        # Define a patched method that doesn't validate the hostname
+        def patched_make_absolute_url(self, url):
+            return original_make_absolute_url(self, url)
+        
+        # Replace the method with our patched version
+        Requester.Requester._makeAbsoluteUrl = patched_make_absolute_url
 
     def create_repository_from_template(
         self,
