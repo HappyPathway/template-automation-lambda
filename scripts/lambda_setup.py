@@ -36,6 +36,10 @@ def install_dependencies():
     print("=== Installing dependencies from requirements.txt ===")
     run_command(f"pip3 install --no-cache-dir -r {TMP_DIR}/requirements.txt -t {LAMBDA_TASK_ROOT} -v")
     
+    # Explicitly install pydantic to ensure it's available
+    print("=== Explicitly installing pydantic ===")
+    run_command(f"pip3 install --no-cache-dir pydantic -t {LAMBDA_TASK_ROOT} -v")
+    
     print("=== Installing package in development mode ===")
     run_command(f"pip3 install --no-cache-dir -e {TMP_DIR} -t {LAMBDA_TASK_ROOT} -v")
 
