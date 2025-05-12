@@ -211,19 +211,27 @@ def lambda_handler(event: dict, context) -> dict:
 
 def get_github_token() -> str:
     """Get GitHub token from AWS Secrets Manager.
-
+    
     Returns:
-         str: GitHub API token
-
+        str: GitHub API token
+        
     Raises:
-        ClientError: If unable to retrieve the secret
+        ClientError: If secret retrieval fails
     """
     try:
-        client = boto3.client('secretsmanager')
+        # Configure boto3 to skip SSL verification if needed
+        session = boto3.session.Session()
+        client_kwargs = {}
+        
+        if not VERIFY_SSL:
+            client_kwargs['verify'] = False
+            # Suppress boto3 warning messages about insecure connections
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        
+        client = session.client('secretsmanager', **client_kwargs)
         response = client.get_secret_value(SecretId=GITHUB_TOKEN_SECRET_NAME)
-        secret = response['SecretString']
-        logger.info("Successfully retrieved GitHub token from Secrets Manager")
-        return secret
+        return response['SecretString']
     except ClientError as e:
         logger.error(f"Failed to get GitHub token: {str(e)}")
         raise
