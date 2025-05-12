@@ -27,11 +27,24 @@ class TemplateManager:
                 'templates' directory in the same location as this file.
             template_repo_name (str, optional): The name of the template repository.
         """
-        if template_root is None:
-            template_root = os.path.join(os.path.dirname(__file__), "templates")
+        default_template_path = os.path.join(os.path.dirname(__file__), "templates")
+        
+        effective_template_root: str
+        if isinstance(template_root, str):
+            effective_template_root = template_root
+        elif template_root is None:
+            effective_template_root = default_template_path
+        else:
+            # template_root is not a string and not None (e.g., a tuple was passed)
+            print(
+                f"Warning: TemplateManager's template_root argument expected str or None, "
+                f"but received type {type(template_root)}. Using default template path: "
+                f"'{default_template_path}'"
+            )
+            effective_template_root = default_template_path
 
         self.env = Environment(
-            loader=FileSystemLoader(template_root),
+            loader=FileSystemLoader(effective_template_root),
             trim_blocks=True,
             lstrip_blocks=True
         )
