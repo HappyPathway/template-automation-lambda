@@ -143,7 +143,13 @@ def lambda_handler(event: dict, context) -> dict:
         )
         
         # Initialize clients
-        github = GitHubClient(github_config)
+        github = GitHubClient(
+            api_base_url=github_config.api_base_url,
+            token=github_config.token,
+            org_name=github_config.org_name,
+            commit_author_name=github_config.commit_author_name,
+            commit_author_email=github_config.commit_author_email
+        )
         template_mgr = TemplateManager(github_config)
         
         # Create repository from template
