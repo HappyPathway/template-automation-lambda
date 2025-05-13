@@ -23,6 +23,9 @@
 		{
 			"name": "r",
 			"path": "../providers/terraform-provider-aws/website/docs/r"
+		},
+		{
+			"path": "../PyGithub"
 		}
 	],
 	"settings": {}

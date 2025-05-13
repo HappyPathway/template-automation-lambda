@@ -153,7 +153,9 @@ def lambda_handler(event: dict, context) -> dict:
             commit_author_email=github_config.commit_author_email,
             verify_ssl=VERIFY_SSL  # Pass SSL verification setting
         )
-        template_mgr = TemplateManager(github_config)
+        
+        # Initialize TemplateManager with proper parameters
+        template_mgr = TemplateManager(template_repo_name=github_config.template_repo_name)
 
         # Create repository from template
         repo_name = template_input.project_name
@@ -176,17 +178,15 @@ def lambda_handler(event: dict, context) -> dict:
         github.update_repository_topics(repo_name, DEFAULT_TOPICS)
 
         # Create pull request with template configuration
-        config = template_mgr.get_pr_config()
-        pr_title = config.title_template.format(repo_name=repo_name)
-        pr_body = config.body_template.format(
+        pr_details = template_mgr.render_pr_details(
             repo_name=repo_name,
-            template_repo=github_config.template_repo_name
+            workflow_files=[DEFAULT_CONFIG_FILE]
         )
-
+        
         pr = github.create_pull_request(
             repo_name=repo_name,
-            title=pr_title,
-            body=pr_body,
+            title=pr_details["title"],
+            body=pr_details["body"],
             head_branch=feature_branch,
             base_branch=github.get_default_branch(repo_name)
         )
