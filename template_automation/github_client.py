@@ -85,37 +85,39 @@ class GitHubClient:
         self.commit_author_email = commit_author_email
         self.verify_ssl = verify_ssl
         
-        # Initialize client and get org
-        self.client = Github(
-            base_url=api_base_url, 
-            login_or_token=token, 
-            verify=verify_ssl,
-            per_page=100  # Optimize API call efficiency
-        )
+        # Set environment variable for PyGithub to allow any hostname (for enterprise GitHub)
+        # This is needed before initializing the client
+        import os
+        os.environ["GITHUB_ALLOW_HOSTNAME"] = "TRUE"
         
-        # Monkey patch the Requester to fix hostname validation for enterprise GitHub
-        self._patch_hostname_validation()
+        try:
+            # Try to use modern auth approach if available
+            from github import Auth
+            auth = Auth.Token(token)
+            self.client = Github(
+                auth=auth,
+                base_url=api_base_url,
+                verify=verify_ssl,
+                per_page=100,  # Optimize API call efficiency
+                timeout=30,    # Set a reasonable timeout
+                retry=10       # Enable retries for transient issues
+            )
+        except ImportError:
+            # Fall back to older authentication method if Auth module isn't available
+            self.client = Github(
+                login_or_token=token,
+                base_url=api_base_url, 
+                verify=verify_ssl,
+                per_page=100,  # Optimize API call efficiency
+                timeout=30,    # Set a reasonable timeout
+            )
         
-        self.org = self.client.get_organization(org_name)
-        logger.info(f"Initialized GitHub client for org: {org_name} (SSL verify: {verify_ssl})")
-        
-    def _patch_hostname_validation(self):
-        """Patch PyGithub's hostname validation to allow enterprise GitHub domains.
-        
-        This is a workaround for PyGithub's hostname validation which only allows known GitHub domains.
-        Enterprise GitHub instances have custom hostnames that would normally fail validation.
-        """
-        from github import Requester
-        
-        # Save the original _makeAbsoluteUrl method
-        original_make_absolute_url = Requester.Requester._makeAbsoluteUrl
-        
-        # Define a patched method that doesn't validate the hostname
-        def patched_make_absolute_url(self, url):
-            return original_make_absolute_url(self, url)
-        
-        # Replace the method with our patched version
-        Requester.Requester._makeAbsoluteUrl = patched_make_absolute_url
+        try:
+            self.org = self.client.get_organization(org_name)
+            logger.info(f"Initialized GitHub client for org: {org_name} (SSL verify: {verify_ssl})")
+        except GithubException as e:
+            logger.error(f"Failed to initialize GitHub client: {str(e)}")
+            raise
 
     def create_repository_from_template(
         self,
