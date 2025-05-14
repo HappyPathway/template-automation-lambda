@@ -185,7 +185,8 @@ class GitHubClient:
                     # Try with minimal parameters first
                     repo = self._request("POST", url, json={
                         "name": repo_name,
-                        "private": True
+                        "private": True,
+                        "auto_init": True  # Try to initialize with README
                     })
                 except requests.exceptions.HTTPError as create_error:
                     # Safe handling of response parsing
@@ -197,31 +198,49 @@ class GitHubClient:
                         logger.error("Received HTML error page instead of JSON response")
                         raise Exception(f"GitHub API returned HTML error page. Your GitHub token may not have sufficient permissions or the GitHub Enterprise server might be configured differently than expected.")
                     
-                    raise create_error
+                    # Try again without auto_init if that was the issue
+                    if "auto_init" in error_message:
+                        repo = self._request("POST", url, json={
+                            "name": repo_name,
+                            "private": True
+                        })
+                    else:
+                        raise create_error
                 
-                # Wait for repository initialization
-                max_retries = 10
-                retry_delay = 2
-                for i in range(max_retries):
+                # Check if we need to initialize the repository with a README.md
+                has_default_branch = False
+                for branch_name in ["main", "master"]:
                     try:
-                        # Try both main and master as possible default branches
-                        for branch_name in ["main", "master"]:
-                            try:
-                                self.get_branch(repo_name, branch_name)
-                                logger.info(f"Repository initialized with default branch '{branch_name}'")
-                                break
-                            except requests.exceptions.HTTPError:
-                                pass
-                        else:
-                            # If we reach here, neither branch was found, but repo may still be usable
-                            if i == max_retries - 1:
-                                logger.warning(f"Repository {repo_name} created but default branch not found")
-                            continue
+                        self.get_branch(repo_name, branch_name)
+                        has_default_branch = True
+                        logger.info(f"Repository initialized with default branch '{branch_name}'")
                         break
                     except requests.exceptions.HTTPError:
-                        logger.info(f"Waiting for repository initialization, attempt {i+1}/{max_retries}")
-                        time.sleep(retry_delay)
-                        retry_delay *= 1.5  # Exponential backoff
+                        pass
+                        
+                if not has_default_branch:
+                    logger.info("Repository created but has no default branch, creating initial README.md")
+                    try:
+                        # Create a README.md to initialize the repository
+                        self.create_readme_file(repo_name)
+                        # Wait for branch to be created
+                        for _ in range(5):
+                            try:
+                                for branch_name in ["main", "master"]:
+                                    try:
+                                        self.get_branch(repo_name, branch_name)
+                                        has_default_branch = True
+                                        logger.info(f"Default branch '{branch_name}' created successfully")
+                                        break
+                                    except requests.exceptions.HTTPError:
+                                        pass
+                                if has_default_branch:
+                                    break
+                            except requests.exceptions.HTTPError:
+                                time.sleep(1)
+                    except Exception as init_error:
+                        logger.error(f"Failed to initialize repository with README: {str(init_error)}")
+                        # Continue anyway since we already have the repository
                 
                 if owning_team:
                     try:
@@ -548,3 +567,32 @@ class GitHubClient:
             
         logger.info(f"Created new repository: {new_repo_name} from template: {template_repo_name}")
         return new_repo
+
+    def create_readme_file(self, repo_name: str) -> Dict[str, Any]:
+        """Create a README.md file in an empty repository to initialize it.
+        
+        Args:
+            repo_name: Name of the repository
+            
+        Returns:
+            The created file content data
+        """
+        content = f"""# {repo_name}
+
+This repository was created automatically by the template automation system.
+        """
+        content_bytes = content.encode("utf-8")
+        content_base64 = base64.b64encode(content_bytes).decode("utf-8")
+        
+        url = f"/api/v3/repos/{self.org_name}/{repo_name}/contents/README.md"
+        result = self._request("PUT", url, json={
+            "message": "Initialize repository with README",
+            "content": content_base64,
+            "committer": {
+                "name": self.commit_author_name,
+                "email": self.commit_author_email
+            }
+        })
+        
+        logger.info(f"Created README.md in repository {repo_name} to initialize it")
+        return result["content"]

@@ -45,6 +45,7 @@ from typing import Optional
 from .models import TemplateInput, GitHubConfig
 from .template_manager import TemplateManager
 from .github_client import GitHubClient
+import requests
 
 # Initialize the logger
 logger = logging.getLogger()
@@ -110,20 +111,6 @@ def lambda_handler(event: dict, context) -> dict:
         ValueError: If input validation fails
         ClientError: On AWS Secrets Manager errors
         GithubException: On GitHub API errors.
-
-    Example:
-        >>> event = {
-        ...     "project_name": "my-new-service",
-        ...     "template_settings": {
-        ...         "environment": "production",
-        ...         "region": "us-west-2"
-        ...     },
-        ...     "trigger_init_workflow": True,
-        ...     "owning_team": "platform-team"
-        ... }
-        >>> result = lambda_handler(event, None)
-        >>> print(result["repository_url"])
-         'https://github.com/myorg/my-new-service'
     """
     try:
         logger.info(f"Processing template request: {event}")
@@ -154,6 +141,17 @@ def lambda_handler(event: dict, context) -> dict:
             verify_ssl=VERIFY_SSL  # Pass SSL verification setting
         )
         
+        # Check if the template repository exists
+        template_repo_name = github_config.template_repo_name
+        try:
+            template_repo = github.get_repository(template_repo_name)
+            logger.info(f"Using template repository: {template_repo_name}")
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                logger.error(f"Template repository not found: {template_repo_name}")
+                raise ValueError(f"Template repository '{template_repo_name}' does not exist in organization {github_config.org_name}")
+            raise
+            
         # Initialize TemplateManager with proper parameters
         template_mgr = TemplateManager(template_repo_name=github_config.template_repo_name)
 
