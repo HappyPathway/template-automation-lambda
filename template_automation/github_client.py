@@ -126,15 +126,26 @@ class GitHubClient:
             
             # Return JSON data for non-empty responses
             if response.text:
-                return response.json()
+                try:
+                    return response.json()
+                except json.JSONDecodeError:
+                    logger.warning(f"Received non-JSON response: {response.text}")
+                    return {"raw_content": response.text}
             return {}
         except requests.exceptions.RequestException as e:
             if hasattr(e, 'response') and e.response is not None:
                 try:
-                    error_body = e.response.json()
-                    logger.error(f"GitHub API error details: {json.dumps(error_body)}")
-                except (ValueError, json.JSONDecodeError):
-                    logger.error(f"GitHub API error: {e.response.text}")
+                    # Try to parse JSON, but handle case where response is not JSON
+                    if e.response.text.strip():
+                        try:
+                            error_body = e.response.json()
+                            logger.error(f"GitHub API error details: {json.dumps(error_body)}")
+                        except json.JSONDecodeError:
+                            logger.error(f"GitHub API returned non-JSON error: {e.response.text}")
+                    else:
+                        logger.error(f"GitHub API returned empty error response with status code: {e.response.status_code}")
+                except (ValueError, AttributeError):
+                    logger.error(f"GitHub API error: Unable to parse response")
             logger.error(f"Request failed: {str(e)}")
             raise
 
@@ -174,25 +185,41 @@ class GitHubClient:
                     # Try with minimal parameters first
                     repo = self._request("POST", url, json={
                         "name": repo_name,
-                        "private": False,
+                        "private": True,
                         "auto_init": True
                     })
                 except requests.exceptions.HTTPError as create_error:
-                    # Log detailed error information for 422 errors
-                    if create_error.response.status_code == 422:
-                        error_response = create_error.response.json()
-                        logger.error(f"GitHub API error details: {json.dumps(error_response)}")
-                        # Try again with even more minimal parameters if it's a schema validation issue
-                        if "message" in error_response and "Validation Failed" in error_response.get("message", ""):
-                            logger.info("Retrying repository creation with minimal parameters")
-                            repo = self._request("POST", url, json={
-                                "name": repo_name,
-                                "private": True
-                            })
+                    # Safe handling of response parsing
+                    error_message = str(create_error)
+                    try:
+                        if create_error.response.text.strip():
+                            try:
+                                error_response = create_error.response.json()
+                                logger.error(f"GitHub API error details: {json.dumps(error_response)}")
+                                # Check for validation errors
+                                if "message" in error_response and "Validation Failed" in error_response.get("message", ""):
+                                    logger.info("Retrying repository creation with minimal parameters")
+                                    repo = self._request("POST", url, json={
+                                        "name": repo_name,
+                                        "private": True
+                                    })
+                                else:
+                                    raise create_error
+                            except json.JSONDecodeError:
+                                # Handle non-JSON responses
+                                logger.error(f"GitHub API returned non-JSON error response: {create_error.response.text}")
+                                # Try with most minimal parameters as a fallback
+                                logger.info("Retrying repository creation with minimal parameters due to non-JSON error")
+                                repo = self._request("POST", url, json={
+                                    "name": repo_name,
+                                    "private": True
+                                })
                         else:
-                            raise
-                    else:
-                        raise
+                            logger.error(f"Empty error response with status code: {create_error.response.status_code}")
+                            raise create_error
+                    except (AttributeError, ValueError) as parse_error:
+                        logger.error(f"Error parsing response: {str(parse_error)}")
+                        raise create_error
                 
                 # Wait for repository initialization
                 max_retries = 10
