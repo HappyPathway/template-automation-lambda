@@ -109,18 +109,34 @@ class GitHubClient:
         kwargs['verify'] = self.verify_ssl
         
         # Log the request
-        logger.debug(f"GitHub API {method} request: {url}")
+        if 'json' in kwargs:
+            logger.info(f"GitHub API {method} request to {url} with payload: {json.dumps(kwargs['json'])}")
+        else:
+            logger.info(f"GitHub API {method} request to {url}")
         
         # Make the request
-        response = self.session.request(method, url, **kwargs)
-        
-        # Raise exception for error status codes
-        response.raise_for_status()
-        
-        # Return JSON data for non-empty responses
-        if response.text:
-            return response.json()
-        return {}
+        try:
+            response = self.session.request(method, url, **kwargs)
+            
+            # Raise exception for error status codes
+            if response.status_code >= 400:
+                logger.error(f"GitHub API error: {response.status_code} - {response.text}")
+                
+            response.raise_for_status()
+            
+            # Return JSON data for non-empty responses
+            if response.text:
+                return response.json()
+            return {}
+        except requests.exceptions.RequestException as e:
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    error_body = e.response.json()
+                    logger.error(f"GitHub API error details: {json.dumps(error_body)}")
+                except (ValueError, json.JSONDecodeError):
+                    logger.error(f"GitHub API error: {e.response.text}")
+            logger.error(f"Request failed: {str(e)}")
+            raise
 
     def get_repository(
         self,
@@ -152,32 +168,61 @@ class GitHubClient:
             if e.response.status_code == 404 and create:
                 logger.info(f"Creating repository {repo_name}")
                 
-                # Create a new repository
+                # Create a new repository with minimal parameters
                 url = f"/orgs/{self.org_name}/repos"
-                repo = self._request("POST", url, json={
-                    "name": repo_name,
-                    "private": True,
-                    "auto_init": True,
-                    "allow_squash_merge": True,
-                    "allow_merge_commit": True,
-                    "allow_rebase_merge": True,
-                    "delete_branch_on_merge": True
-                })
+                try:
+                    # Try with minimal parameters first
+                    repo = self._request("POST", url, json={
+                        "name": repo_name,
+                        "private": False,
+                        "auto_init": True
+                    })
+                except requests.exceptions.HTTPError as create_error:
+                    # Log detailed error information for 422 errors
+                    if create_error.response.status_code == 422:
+                        error_response = create_error.response.json()
+                        logger.error(f"GitHub API error details: {json.dumps(error_response)}")
+                        # Try again with even more minimal parameters if it's a schema validation issue
+                        if "message" in error_response and "Validation Failed" in error_response.get("message", ""):
+                            logger.info("Retrying repository creation with minimal parameters")
+                            repo = self._request("POST", url, json={
+                                "name": repo_name,
+                                "private": True
+                            })
+                        else:
+                            raise
+                    else:
+                        raise
                 
                 # Wait for repository initialization
-                max_retries = 100
-                retry_delay = 1
-                for _ in range(max_retries):
+                max_retries = 10
+                retry_delay = 2
+                for i in range(max_retries):
                     try:
-                        self.get_branch(repo_name, "main")
+                        # Try both main and master as possible default branches
+                        for branch_name in ["main", "master"]:
+                            try:
+                                self.get_branch(repo_name, branch_name)
+                                logger.info(f"Repository initialized with default branch '{branch_name}'")
+                                break
+                            except requests.exceptions.HTTPError:
+                                pass
+                        else:
+                            # If we reach here, neither branch was found, but repo may still be usable
+                            if i == max_retries - 1:
+                                logger.warning(f"Repository {repo_name} created but default branch not found")
+                            continue
                         break
                     except requests.exceptions.HTTPError:
+                        logger.info(f"Waiting for repository initialization, attempt {i+1}/{max_retries}")
                         time.sleep(retry_delay)
-                else:
-                    raise Exception(f"Repository {repo_name} initialization timed out")
+                        retry_delay *= 1.5  # Exponential backoff
                 
                 if owning_team:
-                    self.set_team_permission(repo_name, owning_team, "admin")
+                    try:
+                        self.set_team_permission(repo_name, owning_team, "admin")
+                    except requests.exceptions.HTTPError as perm_error:
+                        logger.warning(f"Failed to set team permission: {str(perm_error)}")
                     
                 return repo
             raise
@@ -415,10 +460,37 @@ class GitHubClient:
             team_name: Name of the team
             permission: Permission level ('pull', 'push', 'admin', 'maintain', 'triage')
         """
-        url = f"/orgs/{self.org_name}/teams/{team_name}/repos/{self.org_name}/{repo_name}"
-        self._request("PUT", url, json={"permission": permission})
-        
-        logger.info(f"Set {team_name} permission on {repo_name} to {permission}")
+        # First check if the team exists
+        try:
+            team_url = f"/orgs/{self.org_name}/teams/{team_name}"
+            team = self._request("GET", team_url)
+            logger.info(f"Found team: {team_name}")
+            
+            # Try to set permissions using the correct endpoint
+            # Different GitHub Enterprise versions might support different API paths
+            try:
+                # First try the standard endpoint
+                url = f"/orgs/{self.org_name}/teams/{team_name}/repos/{self.org_name}/{repo_name}"
+                self._request("PUT", url, json={"permission": permission})
+                logger.info(f"Set {team_name} permission on {repo_name} to {permission}")
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 422 or e.response.status_code == 404:
+                    # Try alternative endpoint format for older GitHub Enterprise versions
+                    try:
+                        alt_url = f"/teams/{team['id']}/repos/{self.org_name}/{repo_name}"
+                        self._request("PUT", alt_url, json={"permission": permission})
+                        logger.info(f"Set {team_name} permission on {repo_name} to {permission} using alternative endpoint")
+                    except requests.exceptions.HTTPError as alt_e:
+                        logger.error(f"Failed to set team permission using alternative endpoint: {str(alt_e)}")
+                        raise
+                else:
+                    raise
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"Failed to find team {team_name}: {str(e)}")
+            if e.response.status_code == 404:
+                logger.warning(f"Team {team_name} not found, skipping permission assignment")
+            else:
+                raise
 
     def update_repository_topics(self, repo_name: str, topics: List[str]) -> None:
         """Update the topics of a repository.
