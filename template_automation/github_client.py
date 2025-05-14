@@ -185,8 +185,7 @@ class GitHubClient:
                     # Try with minimal parameters first
                     repo = self._request("POST", url, json={
                         "name": repo_name,
-                        "private": True,
-                        "auto_init": True  # Try to initialize with README
+                        "private": True
                     })
                 except requests.exceptions.HTTPError as create_error:
                     # Safe handling of response parsing
@@ -198,49 +197,47 @@ class GitHubClient:
                         logger.error("Received HTML error page instead of JSON response")
                         raise Exception(f"GitHub API returned HTML error page. Your GitHub token may not have sufficient permissions or the GitHub Enterprise server might be configured differently than expected.")
                     
-                    # Try again without auto_init if that was the issue
-                    if "auto_init" in error_message:
-                        repo = self._request("POST", url, json={
-                            "name": repo_name,
-                            "private": True
-                        })
-                    else:
-                        raise create_error
+                    raise create_error
                 
-                # Check if we need to initialize the repository with a README.md
-                has_default_branch = False
-                for branch_name in ["main", "master"]:
-                    try:
-                        self.get_branch(repo_name, branch_name)
-                        has_default_branch = True
-                        logger.info(f"Repository initialized with default branch '{branch_name}'")
-                        break
-                    except requests.exceptions.HTTPError:
-                        pass
-                        
-                if not has_default_branch:
-                    logger.info("Repository created but has no default branch, creating initial README.md")
-                    try:
-                        # Create a README.md to initialize the repository
-                        self.create_readme_file(repo_name)
-                        # Wait for branch to be created
-                        for _ in range(5):
-                            try:
-                                for branch_name in ["main", "master"]:
-                                    try:
-                                        self.get_branch(repo_name, branch_name)
-                                        has_default_branch = True
-                                        logger.info(f"Default branch '{branch_name}' created successfully")
-                                        break
-                                    except requests.exceptions.HTTPError:
-                                        pass
-                                if has_default_branch:
-                                    break
-                            except requests.exceptions.HTTPError:
-                                time.sleep(1)
-                    except Exception as init_error:
-                        logger.error(f"Failed to initialize repository with README: {str(init_error)}")
-                        # Continue anyway since we already have the repository
+                # Now explicitly initialize the repository with a README.md file
+                try:
+                    logger.info(f"Initializing repository {repo_name} with a README.md file")
+                    readme_content = f"# {repo_name}\n\nThis repository was created by the template automation system."
+                    content_bytes = readme_content.encode("utf-8")
+                    content_base64 = base64.b64encode(content_bytes).decode("utf-8")
+                    
+                    readme_url = f"/api/v3/repos/{self.org_name}/{repo_name}/contents/README.md"
+                    readme_result = self._request("PUT", readme_url, json={
+                        "message": "Initial commit with README",
+                        "content": content_base64,
+                        "committer": {
+                            "name": self.commit_author_name,
+                            "email": self.commit_author_email
+                        }
+                    })
+                    logger.info(f"Successfully created README.md in {repo_name}")
+                    
+                    # Give GitHub time to process the commit and create the branch
+                    time.sleep(2)
+                    
+                    # Now get the updated repository info
+                    repo = self._request("GET", url.replace("/orgs/", "/repos/"))
+                    
+                    # Verify we have a default branch
+                    for _ in range(3):  # Try up to 3 times
+                        try:
+                            default_branch = repo.get("default_branch", "main")
+                            branch_info = self.get_branch(repo_name, default_branch)
+                            logger.info(f"Confirmed default branch '{default_branch}' exists")
+                            break
+                        except requests.exceptions.HTTPError:
+                            logger.info("Default branch not ready yet, waiting...")
+                            time.sleep(2)
+                            repo = self._request("GET", url.replace("/orgs/", "/repos/"))
+                    
+                except Exception as init_error:
+                    logger.error(f"Failed to initialize repository: {str(init_error)}")
+                    # Continue anyway since we already have the repository
                 
                 if owning_team:
                     try:
@@ -521,12 +518,6 @@ class GitHubClient:
         
         Args:
             repo_name: Name of the repository
-            topics: List of topics to set
-        """
-        # GitHub API requires a special media type for repository topics
-        headers = {"Accept": "application/vnd.github.mercy-preview+json"}
-        url = f"/api/v3/repos/{self.org_name}/{repo_name}/topics"
-        
         self._request("PUT", url, json={"names": topics}, headers=headers)
         
         logger.info(f"Updated topics for {repo_name}: {topics}")
