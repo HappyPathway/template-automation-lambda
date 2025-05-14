@@ -606,25 +606,25 @@ This repository was created automatically by the template automation system.
         
         This method copies all files from the source repository to the target repository,
         effectively implementing repository templating by copying file content.
+        All files are copied in a single commit for a cleaner history.
         
         Args:
             source_repo_name: Name of the source/template repository
             target_repo_name: Name of the target repository where files will be copied
             source_branch: Branch to copy files from in the source repository
             target_branch: Branch to copy files to in the target repository
-            commit_message: Commit message for the file creation commits
+            commit_message: Commit message for the file creation commit
             
         Raises:
             ValueError: If source repository or branch doesn't exist
         """
         logger.info(f"Cloning contents from {source_repo_name}:{source_branch} to {target_repo_name}:{target_branch}")
         
-        # Get the source repository tree
         try:
             # Get the source repository info
             source_repo = self.get_repository(source_repo_name)
             
-            # Get the branch reference
+            # Get the branch reference from source
             try:
                 source_branch_info = self.get_branch(source_repo_name, source_branch)
                 source_commit_sha = source_branch_info["commit"]["sha"]
@@ -641,8 +641,9 @@ This repository was created automatically by the template automation system.
                 # First ensure the target repository has the target branch
                 try:
                     # Check if target branch exists
-                    self.get_branch(target_repo_name, target_branch)
-                    logger.info(f"Target branch {target_branch} already exists in {target_repo_name}")
+                    target_branch_data = self.get_branch(target_repo_name, target_branch)
+                    target_latest_commit = target_branch_data["commit"]["sha"]
+                    logger.info(f"Target branch {target_branch} already exists in {target_repo_name} with commit {target_latest_commit}")
                 except requests.exceptions.HTTPError as e:
                     if e.response.status_code == 404:
                         # Create README to initialize the repository with the target branch
@@ -652,67 +653,81 @@ This repository was created automatically by the template automation system.
                         time.sleep(2)
                         # Verify branch was created
                         try:
-                            self.get_branch(target_repo_name, target_branch)
-                            logger.info(f"Successfully created branch {target_branch} in {target_repo_name}")
+                            target_branch_data = self.get_branch(target_repo_name, target_branch)
+                            target_latest_commit = target_branch_data["commit"]["sha"]
+                            logger.info(f"Successfully created branch {target_branch} in {target_repo_name} with commit {target_latest_commit}")
                         except Exception as branch_err:
                             logger.error(f"Failed to verify branch creation: {str(branch_err)}")
                             raise ValueError(f"Could not initialize repository {target_repo_name} with branch {target_branch}")
                     else:
                         raise
                 
-                # Copy each file from source to target
+                # Get the base tree from the latest commit in the target branch
+                base_tree_url = f"/api/v3/repos/{self.org_name}/{target_repo_name}/git/commits/{target_latest_commit}"
+                base_commit = self._request("GET", base_tree_url)
+                base_tree_sha = base_commit["tree"]["sha"]
+                
+                # Create new tree entries for all files
+                tree_entries = []
+                
+                # Process each file
                 for file_item in files:
                     file_path = file_item["path"]
+                    file_sha = file_item["sha"]
+                    
                     # Skip .git directory and other metadata files if they exist
                     if file_path.startswith(".git/") or file_path == ".git":
                         continue
-                        
-                    # Get the file content from source repo
+                    
+                    # Get the file content using the blob SHA
                     try:
-                        file_url = f"/api/v3/repos/{self.org_name}/{source_repo_name}/contents/{file_path}?ref={source_branch}"
-                        file_data = self._request("GET", file_url)
+                        blob_url = f"/api/v3/repos/{self.org_name}/{source_repo_name}/git/blobs/{file_sha}"
+                        blob_data = self._request("GET", blob_url)
                         
-                        # GitHub API returns the content as base64
-                        content = file_data.get("content", "")
-                        if content:
-                            # GitHub may split content with newlines, remove them
-                            content = content.replace("\n", "")
-                        
-                        # Create the same file in target repo
-                        target_url = f"/api/v3/repos/{self.org_name}/{target_repo_name}/contents/{file_path}"
-                        
-                        # Check if file already exists in target
-                        file_exists = False
-                        try:
-                            existing_file = self._request("GET", f"{target_url}?ref={target_branch}")
-                            file_exists = True
-                            file_sha = existing_file.get("sha")
-                        except requests.exceptions.HTTPError as e:
-                            if e.response.status_code != 404:
-                                raise
-                        
-                        # Setup the request payload
-                        payload = {
-                            "message": f"{commit_message}: {file_path}",
-                            "content": content,
-                            "branch": target_branch,
-                            "committer": {
-                                "name": self.commit_author_name,
-                                "email": self.commit_author_email
-                            }
-                        }
-                        
-                        # Add SHA if updating existing file
-                        if file_exists:
-                            payload["sha"] = file_sha
-                        
-                        # Create or update the file
-                        self._request("PUT", target_url, json=payload)
-                        logger.info(f"Copied file {file_path} to {target_repo_name}")
-                    except Exception as file_err:
-                        logger.error(f"Failed to copy file {file_path}: {str(file_err)}")
+                        # Create tree entry for this file
+                        tree_entries.append({
+                            "path": file_path,
+                            "mode": "100644",  # Regular file
+                            "type": "blob",
+                            "content": base64.b64decode(blob_data.get("content", "")).decode("utf-8") if blob_data.get("encoding") == "base64" else ""
+                        })
+                    except Exception as blob_err:
+                        logger.error(f"Failed to get blob for file {file_path}: {str(blob_err)}")
+                        # Continue with other files
                 
-                logger.info(f"Successfully cloned all files from {source_repo_name} to {target_repo_name}")
+                # Create a new tree with all files
+                logger.info(f"Creating tree with {len(tree_entries)} files in {target_repo_name}")
+                create_tree_url = f"/api/v3/repos/{self.org_name}/{target_repo_name}/git/trees"
+                new_tree = self._request("POST", create_tree_url, json={
+                    "base_tree": base_tree_sha,
+                    "tree": tree_entries
+                })
+                
+                # Create a new commit with this tree
+                create_commit_url = f"/api/v3/repos/{self.org_name}/{target_repo_name}/git/commits"
+                new_commit = self._request("POST", create_commit_url, json={
+                    "message": commit_message,
+                    "tree": new_tree["sha"],
+                    "parents": [target_latest_commit],
+                    "author": {
+                        "name": self.commit_author_name,
+                        "email": self.commit_author_email
+                    },
+                    "committer": {
+                        "name": self.commit_author_name,
+                        "email": self.commit_author_email
+                    }
+                })
+                
+                # Update the branch reference to point to the new commit
+                logger.info(f"Updating branch {target_branch} in {target_repo_name} to new commit")
+                ref_url = f"/api/v3/repos/{self.org_name}/{target_repo_name}/git/refs/heads/{target_branch}"
+                self._request("PATCH", ref_url, json={
+                    "sha": new_commit["sha"],
+                    "force": False
+                })
+                
+                logger.info(f"Successfully cloned all files from {source_repo_name} to {target_repo_name} in a single commit")
                 return
                 
             except requests.exceptions.HTTPError as branch_err:
