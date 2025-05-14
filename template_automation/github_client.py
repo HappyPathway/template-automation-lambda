@@ -167,7 +167,7 @@ class GitHubClient:
         """
         try:
             # Try to get the repository
-            url = f"/repos/{self.org_name}/{repo_name}"
+            url = f"/api/v3/repos/{self.org_name}/{repo_name}"
             repo = self._request("GET", url)
             logger.info(f"Found existing repository: {repo_name}")
             
@@ -180,46 +180,24 @@ class GitHubClient:
                 logger.info(f"Creating repository {repo_name}")
                 
                 # Create a new repository with minimal parameters
-                url = f"/orgs/{self.org_name}/repos"
+                url = f"/api/v3/orgs/{self.org_name}/repos"
                 try:
                     # Try with minimal parameters first
                     repo = self._request("POST", url, json={
                         "name": repo_name,
-                        "private": True,
-                        "auto_init": True
+                        "private": True
                     })
                 except requests.exceptions.HTTPError as create_error:
                     # Safe handling of response parsing
                     error_message = str(create_error)
-                    try:
-                        if create_error.response.text.strip():
-                            try:
-                                error_response = create_error.response.json()
-                                logger.error(f"GitHub API error details: {json.dumps(error_response)}")
-                                # Check for validation errors
-                                if "message" in error_response and "Validation Failed" in error_response.get("message", ""):
-                                    logger.info("Retrying repository creation with minimal parameters")
-                                    repo = self._request("POST", url, json={
-                                        "name": repo_name,
-                                        "private": True
-                                    })
-                                else:
-                                    raise create_error
-                            except json.JSONDecodeError:
-                                # Handle non-JSON responses
-                                logger.error(f"GitHub API returned non-JSON error response: {create_error.response.text}")
-                                # Try with most minimal parameters as a fallback
-                                logger.info("Retrying repository creation with minimal parameters due to non-JSON error")
-                                repo = self._request("POST", url, json={
-                                    "name": repo_name,
-                                    "private": True
-                                })
-                        else:
-                            logger.error(f"Empty error response with status code: {create_error.response.status_code}")
-                            raise create_error
-                    except (AttributeError, ValueError) as parse_error:
-                        logger.error(f"Error parsing response: {str(parse_error)}")
-                        raise create_error
+                    logger.error(f"Failed to create repository with error: {error_message}")
+                    
+                    # If we got an HTML response instead of JSON (likely an error page)
+                    if "<!DOCTYPE html>" in error_message or "<html" in error_message:
+                        logger.error("Received HTML error page instead of JSON response")
+                        raise Exception(f"GitHub API returned HTML error page. Your GitHub token may not have sufficient permissions or the GitHub Enterprise server might be configured differently than expected.")
+                    
+                    raise create_error
                 
                 # Wait for repository initialization
                 max_retries = 10
@@ -264,7 +242,7 @@ class GitHubClient:
         Returns:
             Branch data
         """
-        url = f"/repos/{self.org_name}/{repo_name}/branches/{branch_name}"
+        url = f"/api/v3/repos/{self.org_name}/{repo_name}/branches/{branch_name}"
         return self._request("GET", url)
 
     def get_default_branch(self, repo_name: str) -> str:
@@ -292,7 +270,7 @@ class GitHubClient:
         commit_sha = source_branch["commit"]["sha"]
         
         # Create the new branch
-        url = f"/repos/{self.org_name}/{repo_name}/git/refs"
+        url = f"/api/v3/repos/{self.org_name}/{repo_name}/git/refs"
         self._request("POST", url, json={
             "ref": f"refs/heads/{branch_name}",
             "sha": commit_sha
@@ -308,7 +286,7 @@ class GitHubClient:
             ref: The name of the reference
             sha: The SHA1 value to set this reference to
         """
-        url = f"/repos/{self.org_name}/{repo_name}/git/refs"
+        url = f"/api/v3/repos/{self.org_name}/{repo_name}/git/refs"
         self._request("POST", url, json={
             "ref": ref,
             "sha": sha
@@ -325,7 +303,7 @@ class GitHubClient:
             sha: The SHA1 value to set this reference to
             force: Force update if not a fast-forward update
         """
-        url = f"/repos/{self.org_name}/{repo_name}/git/refs/{ref}"
+        url = f"/api/v3/repos/{self.org_name}/{repo_name}/git/refs/{ref}"
         self._request("PATCH", url, json={
             "sha": sha,
             "force": force
@@ -361,7 +339,7 @@ class GitHubClient:
         try:
             file = self.get_file_contents(repo_name, path, branch)
             # Update existing file
-            url = f"/repos/{self.org_name}/{repo_name}/contents/{path}"
+            url = f"/api/v3/repos/{self.org_name}/{repo_name}/contents/{path}"
             result = self._request("PUT", url, json={
                 "message": commit_message or f"Update {path}",
                 "content": content_base64,
@@ -377,7 +355,7 @@ class GitHubClient:
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:
                 # Create new file
-                url = f"/repos/{self.org_name}/{repo_name}/contents/{path}"
+                url = f"/api/v3/repos/{self.org_name}/{repo_name}/contents/{path}"
                 result = self._request("PUT", url, json={
                     "message": commit_message or f"Create {path}",
                     "content": content_base64,
@@ -402,7 +380,7 @@ class GitHubClient:
         Returns:
             File data
         """
-        url = f"/repos/{self.org_name}/{repo_name}/contents/{path}"
+        url = f"/api/v3/repos/{self.org_name}/{repo_name}/contents/{path}"
         params = {"ref": ref}
         return self._request("GET", url, params=params)
 
@@ -442,7 +420,7 @@ class GitHubClient:
         Returns:
             The created pull request object
         """
-        url = f"/repos/{self.org_name}/{repo_name}/pulls"
+        url = f"/api/v3/repos/{self.org_name}/{repo_name}/pulls"
         pr = self._request("POST", url, json={
             "title": title,
             "body": body,
@@ -469,7 +447,7 @@ class GitHubClient:
             ref: Git reference to run the workflow on
             inputs: Input parameters for the workflow
         """
-        url = f"/repos/{self.org_name}/{repo_name}/actions/workflows/{workflow_id}/dispatches"
+        url = f"/api/v3/repos/{self.org_name}/{repo_name}/actions/workflows/{workflow_id}/dispatches"
         workflow_inputs = inputs if inputs is not None else {}
         
         self._request("POST", url, json={
@@ -478,7 +456,7 @@ class GitHubClient:
         })
         
         logger.info(f"Triggered workflow {workflow_id} in {repo_name} on {ref}")
-
+    
     def set_team_permission(self, repo_name: str, team_name: str, permission: str) -> None:
         """Set a team's permission on a repository.
         
@@ -489,7 +467,7 @@ class GitHubClient:
         """
         # First check if the team exists
         try:
-            team_url = f"/orgs/{self.org_name}/teams/{team_name}"
+            team_url = f"/api/v3/orgs/{self.org_name}/teams/{team_name}"
             team = self._request("GET", team_url)
             logger.info(f"Found team: {team_name}")
             
@@ -497,14 +475,14 @@ class GitHubClient:
             # Different GitHub Enterprise versions might support different API paths
             try:
                 # First try the standard endpoint
-                url = f"/orgs/{self.org_name}/teams/{team_name}/repos/{self.org_name}/{repo_name}"
+                url = f"/api/v3/orgs/{self.org_name}/teams/{team_name}/repos/{self.org_name}/{repo_name}"
                 self._request("PUT", url, json={"permission": permission})
                 logger.info(f"Set {team_name} permission on {repo_name} to {permission}")
             except requests.exceptions.HTTPError as e:
                 if e.response.status_code == 422 or e.response.status_code == 404:
                     # Try alternative endpoint format for older GitHub Enterprise versions
                     try:
-                        alt_url = f"/teams/{team['id']}/repos/{self.org_name}/{repo_name}"
+                        alt_url = f"/api/v3/teams/{team['id']}/repos/{self.org_name}/{repo_name}"
                         self._request("PUT", alt_url, json={"permission": permission})
                         logger.info(f"Set {team_name} permission on {repo_name} to {permission} using alternative endpoint")
                     except requests.exceptions.HTTPError as alt_e:
@@ -528,7 +506,7 @@ class GitHubClient:
         """
         # GitHub API requires a special media type for repository topics
         headers = {"Accept": "application/vnd.github.mercy-preview+json"}
-        url = f"/repos/{self.org_name}/{repo_name}/topics"
+        url = f"/api/v3/repos/{self.org_name}/{repo_name}/topics"
         
         self._request("PUT", url, json={"names": topics}, headers=headers)
         
@@ -554,7 +532,7 @@ class GitHubClient:
         Returns:
             The newly created repository
         """
-        url = f"/repos/{self.org_name}/{template_repo_name}/generate"
+        url = f"/api/v3/repos/{self.org_name}/{template_repo_name}/generate"
         
         # Create repository from template
         new_repo = self._request("POST", url, json={

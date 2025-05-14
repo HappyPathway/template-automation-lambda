@@ -1,0 +1,30 @@
+{
+  "owning_team": "platform-team",
+  "project_name": "example-template-repos-cluster",
+  "template_settings": {
+    "attrs": {
+      "account_name": "dev-account",
+      "aws_region": "us-gov-west-1",
+      "cluster_mailing_list": "eks-admins@example.com",
+      "cluster_name": "example-cluster-dev",
+      "eks_instance_disk_size": "100",
+      "eks_ng_desired_size": "2",
+      "eks_ng_max_size": "10",
+      "eks_ng_min_size": "2",
+      "environment": "development",
+      "environment_abbr": "dev",
+      "finops_project_name": "example_project",
+      "finops_project_number": "fp00000001",
+      "finops_project_role": "example_project_app",
+      "organization": "example:dept:team",
+      "vpc_domain_name": "dev.example.com",
+      "vpc_name": "vpc-dev"
+    },
+    "tags": {
+      "managed_by": "terraform",
+      "owner": "platform-team",
+      "slim:schedule": "8:00-17:00"
+    }
+  },
+  "trigger_init_workflow": true
+}

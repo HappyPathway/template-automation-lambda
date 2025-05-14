@@ -134,7 +134,7 @@ def lambda_handler(event: dict, context) -> dict:
 
         # Get GitHub configuration from environment/parameter store
         github_config = GitHubConfig(
-            api_base_url=os.environ["GITHUB_API"],
+            api_base_url=get_github_base_url(os.environ["GITHUB_API"]),
             org_name=os.environ["GITHUB_ORG_NAME"],
             commit_author_name=os.environ.get("GITHUB_COMMIT_AUTHOR_NAME", "Template Automation"),
             commit_author_email=os.environ.get("GITHUB_COMMIT_AUTHOR_EMAIL", "automation@example.com"),
@@ -235,3 +235,25 @@ def get_github_token() -> str:
     except ClientError as e:
         logger.error(f"Failed to get GitHub token: {str(e)}")
         raise
+
+
+def get_github_base_url(api_url: str) -> str:
+    """Normalize GitHub API URL for GitHub Enterprise Server.
+    
+    Args:
+        api_url: Raw GitHub API URL from environment
+    
+    Returns:
+        Normalized base URL for GitHub API
+    """
+    # Remove trailing slashes and /api/v3 if present
+    base_url = api_url.rstrip('/')
+    if base_url.endswith('/api/v3'):
+        base_url = base_url[:-7]
+    elif '/api/v3' in base_url:
+        # In some GitHub Enterprise setups, the URL might be like https://github.e.it.census.gov/api/v3
+        # Extract just the server part
+        base_url = base_url.split('/api/v3')[0]
+    
+    logger.info(f"Using GitHub base URL: {base_url}")
+    return base_url
