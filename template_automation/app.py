@@ -106,11 +106,6 @@ def lambda_handler(event: dict, context) -> dict:
         dict: Creation results containing:
             repository_url (str): URL of the created repository
             pull_request_url (str, optional): URL of the config pull request
-
-    Raises:
-        ValueError: If input validation fails
-        ClientError: On AWS Secrets Manager errors
-        GithubException: On GitHub API errors.
     """
     try:
         logger.info(f"Processing template request: {event}")
@@ -158,10 +153,32 @@ def lambda_handler(event: dict, context) -> dict:
         # Create repository from template
         repo_name = template_input.project_name
         repo = github.get_repository(repo_name, create=True, owning_team=template_input.owning_team)
+        
+        # Ensure the repository has a default branch by creating a README if needed
+        default_branch = None
+        try:
+            # Try to get the default branch
+            default_branch = repo.get("default_branch", "main")
+            github.get_branch(repo_name, default_branch)
+            logger.info(f"Repository has default branch: {default_branch}")
+        except requests.exceptions.HTTPError:
+            # No default branch found, create a README to initialize the repository
+            logger.info(f"No default branch found, initializing repository with README.md")
+            github.create_readme_file(repo_name)
+            
+            # Wait for branch to be created and get the repository again
+            time.sleep(2)
+            try:
+                repo = github.get_repository(repo_name)
+                default_branch = repo.get("default_branch", "main")
+                logger.info(f"Repository initialized with default branch: {default_branch}")
+            except Exception as e:
+                logger.error(f"Failed to get updated repository info: {str(e)}")
+                raise ValueError("Repository was created but could not be initialized with a default branch")
 
         # Create feature branch for template configuration
         feature_branch = f"template-config-{int(time.time())}"
-        github.create_branch(repo_name, feature_branch)
+        github.create_branch(repo_name, feature_branch, from_ref=default_branch)
 
         # Write template configuration
         github.write_file(
@@ -186,7 +203,7 @@ def lambda_handler(event: dict, context) -> dict:
             title=pr_details["title"],
             body=pr_details["body"],
             head_branch=feature_branch,
-            base_branch=github.get_default_branch(repo_name)
+            base_branch=default_branch
         )
 
         # Optionally trigger initialization workflow
