@@ -195,7 +195,7 @@ def lambda_handler(event: dict, context) -> dict:
             logger.info("Continuing with repository setup even though template copying failed")
 
         # Create feature branch for template configuration
-        feature_branch = f"template-config-{int(time.time())}"
+        feature_branch = "repo-init"  # Use consistent branch name instead of timestamp-based name
         github.create_branch(repo_name, feature_branch, from_ref=default_branch)
 
         # Write template configuration
