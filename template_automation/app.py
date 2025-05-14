@@ -152,6 +152,8 @@ def lambda_handler(event: dict, context) -> dict:
 
         # Create repository from template
         repo_name = template_input.project_name
+        
+        # Create a new empty repository first
         repo = github.get_repository(repo_name, create=True, owning_team=template_input.owning_team)
         
         # Ensure the repository has a default branch by creating a README if needed
@@ -175,6 +177,22 @@ def lambda_handler(event: dict, context) -> dict:
             except Exception as e:
                 logger.error(f"Failed to get updated repository info: {str(e)}")
                 raise ValueError("Repository was created but could not be initialized with a default branch")
+        
+        # Clone all files from template repository to the new repository
+        template_repo_name = github_config.template_repo_name
+        logger.info(f"Copying all files from template repository {template_repo_name} to {repo_name}")
+        try:
+            github.clone_repository_contents(
+                source_repo_name=template_repo_name,
+                target_repo_name=repo_name,
+                source_branch="main",  # Default branch of template
+                target_branch=default_branch,
+                commit_message="Initial setup from template repository"
+            )
+            logger.info(f"Successfully copied all files from {template_repo_name} to {repo_name}")
+        except Exception as e:
+            logger.error(f"Error copying files from template: {str(e)}")
+            logger.info("Continuing with repository setup even though template copying failed")
 
         # Create feature branch for template configuration
         feature_branch = f"template-config-{int(time.time())}"
@@ -209,15 +227,25 @@ def lambda_handler(event: dict, context) -> dict:
 
         # Optionally trigger initialization workflow
         if template_input.trigger_init_workflow:
-            github.trigger_workflow(
-                repo_name=repo_name,
-                workflow_id="initialize.yml",
-                ref=feature_branch
-            )
-
+            try:
+                logger.info(f"Attempting to trigger workflow initialize.yml in repository {repo_name}")
+                github.trigger_workflow(
+                    repo_name=repo_name,
+                    workflow_id="initialize.yml",
+                    ref=feature_branch
+                )
+                logger.info(f"Successfully triggered initialize.yml workflow in repository {repo_name}")
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 404:
+                    logger.warning(f"Workflow initialize.yml not found in repository {repo_name}. This is expected if the repository was created from scratch instead of from a template.")
+                    logger.info("Continuing without triggering workflow...")
+                else:
+                    logger.error(f"Failed to trigger workflow: {str(e)}")
+                    # Don't raise the exception, allow the function to complete successfully
+        
         return {
-            "repository_url": repo.html_url,
-            "pull_request_url": pr.html_url if pr else None
+            "repository_url": repo["html_url"],
+            "pull_request_url": pr["html_url"] if pr else None
         }
     except Exception as e:
         logger.error(f"Failed to process template request: {str(e)}")
