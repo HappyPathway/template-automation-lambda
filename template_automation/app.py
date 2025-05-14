@@ -228,11 +228,11 @@ def lambda_handler(event: dict, context) -> dict:
         # Optionally trigger initialization workflow
         if template_input.trigger_init_workflow:
             try:
-                logger.info(f"Attempting to trigger workflow initialize.yml in repository {repo_name}")
+                logger.info(f"Attempting to trigger workflow initialize.yml on branch repo-init in repository {repo_name}")
                 github.trigger_workflow(
                     repo_name=repo_name,
                     workflow_id="initialize.yml",
-                    ref=feature_branch
+                    ref="repo-init"  # Using the consistent branch name instead of feature_branch variable
                 )
                 logger.info(f"Successfully triggered initialize.yml workflow in repository {repo_name}")
             except requests.exceptions.HTTPError as e:
