@@ -518,6 +518,12 @@ class GitHubClient:
         
         Args:
             repo_name: Name of the repository
+            topics: List of topics to set
+        """
+        # GitHub API requires a special media type for repository topics
+        headers = {"Accept": "application/vnd.github.mercy-preview+json"}
+        url = f"/api/v3/repos/{self.org_name}/{repo_name}/topics"
+        
         self._request("PUT", url, json={"names": topics}, headers=headers)
         
         logger.info(f"Updated topics for {repo_name}: {topics}")
