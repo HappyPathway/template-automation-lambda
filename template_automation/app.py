@@ -181,10 +181,11 @@ def lambda_handler(event: dict, context) -> dict:
         github.create_branch(repo_name, feature_branch, from_ref=default_branch)
 
         # Write template configuration
+        import json
         github.write_file(
             repo=repo,
             path=DEFAULT_CONFIG_FILE,
-            content=template_input.template_settings.json(),
+            content=json.dumps(template_input.template_settings, indent=2),
             branch=feature_branch,
             commit_message=f"Initialize {DEFAULT_CONFIG_FILE} from template"
         )
