@@ -225,23 +225,8 @@ def lambda_handler(event: dict, context) -> dict:
             base_branch=default_branch
         )
 
-        # Optionally trigger initialization workflow
-        if template_input.trigger_init_workflow:
-            try:
-                logger.info(f"Attempting to trigger workflow initialize.yml on branch repo-init in repository {repo_name}")
-                github.trigger_workflow(
-                    repo_name=repo_name,
-                    workflow_id="initialize.yml",
-                    ref="repo-init"  # Using the consistent branch name instead of feature_branch variable
-                )
-                logger.info(f"Successfully triggered initialize.yml workflow in repository {repo_name}")
-            except requests.exceptions.HTTPError as e:
-                if e.response.status_code == 404:
-                    logger.warning(f"Workflow initialize.yml not found in repository {repo_name}. This is expected if the repository was created from scratch instead of from a template.")
-                    logger.info("Continuing without triggering workflow...")
-                else:
-                    logger.error(f"Failed to trigger workflow: {str(e)}")
-                    # Don't raise the exception, allow the function to complete successfully
+        # The initialize.yml workflow will run automatically when the PR is created
+        # since it's configured to trigger on pull_request events with repo-init as the head branch
         
         return {
             "repository_url": repo["html_url"],
